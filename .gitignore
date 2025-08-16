@@ -1,0 +1,8 @@
+/.terraform.lock.hcl
+/.terraform/**
+/passwords.txt
+/prod.tfstate
+/prod.tfstate.backup
+/sb.tfstate
+/sb.tfstate.backup
+/..bfg-report/**

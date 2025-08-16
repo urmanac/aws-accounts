@@ -1,5 +1,6 @@
 provider "aws" {
-  profile = "${var.environment}-bootstrap" # expects you to set up ~/.aws/credentials
+  # profile = "${var.environment}-bootstrap" # expects you to set up ~/.aws/credentials
+  # profile = "terraform-admin-${var.environment}-mfa" # now with MFA required
   region  = "us-east-1"                    # pick one
 }
 
