@@ -1,3 +1,12 @@
+# 0. Adopt existing IAM user
+resource "aws_iam_user" "iamroot" {
+  name = "${var.admin_username}"
+  tags = {
+    Environment = var.environment
+    Role        = "admin"
+  }
+}
+
 # 1. Create IAM user
 resource "aws_iam_user" "admin" {
   name = "${var.admin_username}-${var.environment}"
@@ -20,6 +29,11 @@ resource "aws_iam_group_policy_attachment" "admin_access" {
 # 3. Membership
 resource "aws_iam_user_group_membership" "admin_membership" {
   user   = aws_iam_user.admin.name
+  groups = [aws_iam_group.admins.name]
+}
+
+resource "aws_iam_user_group_membership" "iamroot_membership" {
+  user   = aws_iam_user.iamroot.name
   groups = [aws_iam_group.admins.name]
 }
 
@@ -58,5 +72,10 @@ resource "aws_iam_policy" "require_mfa" {
 
 resource "aws_iam_user_policy_attachment" "attach_mfa" {
   user       = aws_iam_user.admin.name
+  policy_arn = aws_iam_policy.require_mfa.arn
+}
+
+resource "aws_iam_user_policy_attachment" "attach_mfa_iamroot" {
+  user       = aws_iam_user.iamroot.name
   policy_arn = aws_iam_policy.require_mfa.arn
 }
