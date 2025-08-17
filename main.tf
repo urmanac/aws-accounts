@@ -38,6 +38,7 @@ module "vpc_eu_west_1" {
   cidr   = "10.10.0.0/16"
   region = "eu-west-1"
   enable_bastion_networking = true
+  enable_bastion_private_networking = false
 }
 
 module "vpc_us_east_1" {

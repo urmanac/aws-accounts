@@ -24,7 +24,13 @@ variable "region" {
 
 variable "enable_bastion_networking" {
   type        = bool
-  description = "Enable networking components required for bastion hosts (SSM endpoints, bastion security group)"
+  description = "Enable networking components required for bastion hosts (bastion security group)"
+  default     = false
+}
+
+variable "enable_bastion_private_networking" {
+  type        = bool
+  description = "Enable SSM VPC endpoints (cost something) networking components required for private bastion hosts"
   default     = false
 }
 
@@ -158,7 +164,7 @@ resource "aws_security_group" "bastion" {
 
 # Interface endpoints for SSM (only created if bastion networking is enabled)
 resource "aws_vpc_endpoint" "ssm" {
-  count              = var.enable_bastion_networking ? 1 : 0
+  count              = var.enable_bastion_private_networking ? 1 : 0
   vpc_id             = aws_vpc.this.id
   service_name       = "com.amazonaws.${var.region}.ssm"
   vpc_endpoint_type  = "Interface"
@@ -168,7 +174,7 @@ resource "aws_vpc_endpoint" "ssm" {
 }
 
 resource "aws_vpc_endpoint" "ec2messages" {
-  count              = var.enable_bastion_networking ? 1 : 0
+  count              = var.enable_bastion_private_networking ? 1 : 0
   vpc_id             = aws_vpc.this.id
   service_name       = "com.amazonaws.${var.region}.ec2messages"
   vpc_endpoint_type  = "Interface"
@@ -178,7 +184,7 @@ resource "aws_vpc_endpoint" "ec2messages" {
 }
 
 resource "aws_vpc_endpoint" "ssmmessages" {
-  count              = var.enable_bastion_networking ? 1 : 0
+  count              = var.enable_bastion_private_networking ? 1 : 0
   vpc_id             = aws_vpc.this.id
   service_name       = "com.amazonaws.${var.region}.ssmmessages"
   vpc_endpoint_type  = "Interface"

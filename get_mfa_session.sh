@@ -35,7 +35,8 @@ _aws_mfa_impl() {
     return 1
   fi
 
-  local ENV="${AWS_PROFILE%%-*}"
+  local ENV="$(printf '%s' "$AWS_PROFILE" | cut -d'-' -f1)"
+
   local ENV_FILE=".env.${ENV}"
 
   if [ ! -f "$ENV_FILE" ]; then
@@ -53,7 +54,8 @@ EOF
   source "$ENV_FILE" || { echo "Error: couldn't source $ENV_FILE" >&2; return 1; }
 
   for var in ACCOUNT_ID MFA_DEVICE_NAME OP_VAULT_ITEM; do
-    if [ -z "${!var:-}" ]; then
+    eval val=\$$var
+    if [ -z "${val:-}" ]; then
       echo "Error: $var is missing in $ENV_FILE" >&2
       return 1
     fi
