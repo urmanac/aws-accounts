@@ -1,0 +1,17 @@
+## Future Direction
+
+While this setup provides a secure, streamlined experience today, it also positions us well for future improvements as our security and access management needs grow. Some natural next steps include:
+
+* **Migration to AWS IAM Identity Center (SSO):**
+  In larger environments with multiple users, IAM Identity Center (formerly AWS SSO) provides a centralized, MFA-enforced login experience. This removes the need for long-term IAM users and keys altogether, relying instead on short-lived, scoped credentials issued per session.
+
+* **Seamless MFA Everywhere:**
+  Today, we achieve MFA-backed session credentials with a combination of OnePassword CLI and `aws sts get-session-token`. As the organization matures, adopting SSO would ensure that *every* user and workload benefits from the same MFA protections by default.
+
+* **Scalable Environment Separation:**
+  Using `.env.prod`, `.env.test`, and similar files already helps to separate environments. Moving forward, these can be paired with centralized secrets management and policy-based access controls to enforce strict boundaries between test, staging, and production.
+
+* **Reduced Reliance on IAM Users:**
+  IAM users are still supported, but long term, AWS encourages transitioning entirely to Identity Center or federated identity providers. This simplifies compliance, auditing, and credential lifecycle management.
+
+By starting with a strong MFA-enforced workflow today, we’ve built a foundation that can grow into a fully centralized identity and access solution tomorrow — without losing the smooth developer experience we have now.
