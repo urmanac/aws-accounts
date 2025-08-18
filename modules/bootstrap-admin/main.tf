@@ -79,3 +79,31 @@ resource "aws_iam_user_policy_attachment" "attach_mfa_iamroot" {
   user       = aws_iam_user.iamroot.name
   policy_arn = aws_iam_policy.require_mfa.arn
 }
+
+resource "aws_iam_policy" "cost_explorer_access" {
+  name        = "CostExplorerAccess"
+  description = "Grants permissions to view AWS Cost Explorer data"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = [
+          "ce:GetCostAndUsage",
+          "ce:GetCostForecast",
+          "ce:GetReservationUtilization",
+          "ce:GetReservationPurchaseRecommendation",
+          "ce:DescribeReport",
+          "ce:GetDimensionValues"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "terraform_iamroot_cost_explorer" {
+  user       = aws_iam_user.iamroot.name
+  policy_arn = aws_iam_policy.cost_explorer_access.arn
+}

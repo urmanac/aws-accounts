@@ -6,3 +6,12 @@
 /sb.tfstate
 /sb.tfstate.backup
 /..bfg-report/**
+/.sb.tfstate.lock.info
+
+# Stakpak local files
+.stakpak
+
+# Environments (not that secret - just account numbers)
+/.env.prod
+/.env.sb
+/.env
