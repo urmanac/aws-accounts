@@ -5,6 +5,7 @@ export AWS_PROFILE=sb-bootstrap
 export AWS_PROFILE=prod-bootstrap
 
 source ./get_mfa_session.sh
+get_mfa
 ```
 
 You must have AWS Credentials in a file in ~/.aws/credentials, or export them
