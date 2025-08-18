@@ -88,6 +88,14 @@ resource "aws_launch_template" "bastion" {
   user_data = base64encode(<<-EOT
               #!/usr/bin/env bash
               set -euo pipefail
+
+              # Create SSH authorized_keys for ec2-user
+              mkdir -p /home/ec2-user/.ssh
+              echo "${var.my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
+              chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+              chmod 700 /home/ec2-user/.ssh
+              chmod 600 /home/ec2-user/.ssh/authorized_keys
+
               dnf update -y
               dnf install -y git unzip jq
               cd /root
@@ -101,6 +109,7 @@ resource "aws_launch_template" "bastion" {
               ./install-opentofu.sh --install-method rpm
               # Remove the installer:
               rm -f install-opentofu.sh
+
               cat >/etc/profile.d/assume-tf-ci.sh <<'EOP'
               export AWS_REGION=${var.region}
               export AWS_PAGER=""

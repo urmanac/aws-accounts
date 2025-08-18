@@ -17,6 +17,11 @@ module "bootstrap_admin" {
   account_id  = var.account_map[var.environment]
 }
 
+
+locals {
+  env = { for kv in regexall("(\\w+)=(.*)", file(".env")) : kv[0] => kv[1] }
+}
+
 module "bastion_ci" {
   source      = "./modules/bastion-ci"
   # providers   = { aws = aws.eu_west_1 }
@@ -29,6 +34,8 @@ module "bastion_ci" {
   ssm_security_group_id     = module.vpc_eu_west_1.ssm_security_group_id
   bastion_security_group_id = module.vpc_eu_west_1.bastion_security_group_id
   instance_type             = "t4g.small"
+  # assign from .env
+  my_public_ssh_key         = local.env["MY_PUBLIC_SSH_KEY"]
 }
 
 module "vpc_eu_west_1" {

@@ -39,3 +39,8 @@ variable "ssm_security_group_id" {
   description = "Security group ID to attach to the bastion instance"
   type        = string
 }
+
+variable "my_public_ssh_key" {
+  description = "Public SSH key of the user who should get ec2-user access"
+  type        = string
+}
