@@ -89,6 +89,10 @@ EOF
   export AWS_SECRET_ACCESS_KEY="$(printf '%s' "$CREDS" | jq -r .Credentials.SecretAccessKey)" || return 1
   export AWS_SESSION_TOKEN="$(printf '%s' "$CREDS" | jq -r .Credentials.SessionToken)" || return 1
 
-  printf '✓ MFA session active for %s (account %s). Expires in 1 hour.\n' "$ENV" "$ACCOUNT_ID"
+  # get last 3 digits of ACCOUNT_ID
+  local last3
+  last3="$(printf '%s' "$ACCOUNT_ID" | tail -c 3)"  # -c last 3 chars
+
+  printf '✓ MFA session active for %s (account %s). Expires in 1 hour.\n' "$ENV" "$last3"
   return 0
 }
