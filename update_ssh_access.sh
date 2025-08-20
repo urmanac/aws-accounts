@@ -7,7 +7,7 @@ set -euo pipefail
 
 # --- Configuration ---
 REGION="eu-west-1"
-ASG_NAME="bastion-asg"
+ASG_NAME="tf-asg"
 SECURITY_GROUP_NAME="sandbox-eu-bastion-sg"
 ENV_FILE=".env"
 
