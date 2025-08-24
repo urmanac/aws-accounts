@@ -74,7 +74,8 @@ resource "aws_launch_template" "bastion" {
 
   network_interfaces {
     subnet_id                   = element(var.public_subnet_ids, 0)
-    associate_public_ip_address = true
+    associate_public_ip_address = false # <– important, disables IPv4
+    ipv6_address_count          = 1     # <– asks for a single IPv6
     security_groups             = [var.bastion_security_group_id, var.ssm_security_group_id]
   }
 
