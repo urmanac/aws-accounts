@@ -74,8 +74,8 @@ resource "aws_launch_template" "bastion" {
 
   network_interfaces {
     subnet_id                   = element(var.public_subnet_ids, 0)
-    associate_public_ip_address = false # <– important, disables IPv4
-    ipv6_address_count          = 1     # <– asks for a single IPv6
+    associate_public_ip_address = false
+    ipv6_address_count          = 1
     security_groups             = [var.bastion_security_group_id, var.ssm_security_group_id]
   }
 
@@ -86,70 +86,14 @@ resource "aws_launch_template" "bastion" {
     }
   }
 
-  user_data = base64encode(<<-EOT
-              #!/usr/bin/env bash
-              set -euo pipefail
-
-              # Create SSH authorized_keys for ec2-user
-              mkdir -p /home/ec2-user/.ssh
-              echo "${var.my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
-              # echo "${var.my_wireguard_client_key}" > /root/client.key
-              # echo "${var.my_wireguard_client_pub}" > /root/client.pub
-              chown -R ec2-user:ec2-user /home/ec2-user/.ssh
-              chmod 700 /home/ec2-user/.ssh
-              chmod 600 /home/ec2-user/.ssh/authorized_keys
-
-              dnf update -y
-              dnf install -y git unzip jq iptables wireguard-tools
-              cd /root
-
-              # Without Wireguard to IPv4, could not install OpenTofu from IPv6
-              cat >/etc/wireguard/wg0.conf <<'EOP'
-              [Interface]
-              Address = 10.66.66.2/32, fd42:42:42::2/128
-              PrivateKey = ${var.my_wireguard_client_key}
-              # Optional: pick a DNS if you want the bastion to resolve via the server
-              # DNS = 1.1.1.1
-
-              [Peer]
-              # Your Debian server
-              PublicKey = ${var.my_wireguard_server_pub}
-              Endpoint = [${var.my_wireguard_server_ipv6}]:51820          # server's IPv6 address in brackets
-              AllowedIPs = 0.0.0.0/0, 10.66.66.0/24         # send ALL IPv4 via tunnel; keep IPv6 direct
-              PersistentKeepalive = 25
-              EOP
-              systemctl enable --now wg-quick@wg0
-
-              # Download the installer script:
-              curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
-              # Alternatively: wget --secure-protocol=TLSv1_2 --https-only https://get.opentofu.org/install-opentofu.sh -O install-opentofu.sh
-              # Give it execution permissions:
-              chmod +x install-opentofu.sh
-              # Please inspect the downloaded script
-              # Run the installer:
-              ./install-opentofu.sh --install-method rpm
-              # Remove the installer:
-              rm -f install-opentofu.sh
-
-              cat >/etc/profile.d/assume-tf-ci.sh <<'EOP'
-              export AWS_REGION=${var.region}
-              export AWS_PAGER=""
-              assume_tf_ci() {
-                CREDS=$(aws sts assume-role --role-arn ${aws_iam_role.terraform_ci.arn} --role-session-name tfci-$$)
-                export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId)
-                export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey)
-                export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken)
-                echo "Assumed ${aws_iam_role.terraform_ci.arn}"
-              }
-              EOP
-
-              # SSM Agent is preinstalled on AL2/AL2023; ensure it's running
-              systemctl enable amazon-ssm-agent
-              systemctl start amazon-ssm-agent
-              echo "Bootstrap complete" | logger
-
-              EOT
-  )
+  user_data = base64encode(templatefile("${path.module}/templates/userdata.tftpl", {
+    my_public_ssh_key     = var.my_public_ssh_key
+    my_wireguard_client_key = var.my_wireguard_client_key
+    my_wireguard_server_pub = var.my_wireguard_server_pub
+    my_wireguard_server_ipv6 = var.my_wireguard_server_ipv6
+    region                = var.region
+    terraform_ci_role_arn = aws_iam_role.terraform_ci.arn
+  }))
 }
 
 # Auto Scaling group
