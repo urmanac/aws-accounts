@@ -36,6 +36,10 @@ module "bastion_ci" {
   instance_type             = "t4g.small"
   # assign from .env
   my_public_ssh_key         = local.env["MY_PUBLIC_SSH_KEY"]
+  my_wireguard_client_key   = local.env["MY_WIREGUARD_CLIENT_KEY"]
+  my_wireguard_client_pub   = local.env["MY_WIREGUARD_CLIENT_PUB"]
+  my_wireguard_server_pub   = local.env["MY_WIREGUARD_SERVER_PUB"]
+  my_wireguard_server_ipv6  = local.env["MY_WIREGUARD_SERVER_IPV6"]
 }
 
 module "vpc_eu_west_1" {

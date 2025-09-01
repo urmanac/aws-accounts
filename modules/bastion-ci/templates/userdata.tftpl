@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Create SSH authorized_keys for ec2-user
+mkdir -p /home/ec2-user/.ssh
+echo "${my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
+chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+chmod 700 /home/ec2-user/.ssh
+chmod 600 /home/ec2-user/.ssh/authorized_keys
+
+dnf update -y
+dnf install -y git unzip jq iptables wireguard-tools
+cd /root
+
+# WireGuard config
+cat >/etc/wireguard/wg0.conf <<EOP
+[Interface]
+Address = 10.66.66.2/32, fd42:42:42::2/128
+PrivateKey = ${my_wireguard_client_key}
+
+[Peer]
+PublicKey = ${my_wireguard_server_pub}
+Endpoint = [${my_wireguard_server_ipv6}]:51820
+AllowedIPs = 0.0.0.0/0, 10.66.66.0/24
+PersistentKeepalive = 25
+EOP
+
+systemctl enable --now wg-quick@wg0
+
+# Install OpenTofu
+curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+chmod +x install-opentofu.sh
+./install-opentofu.sh --install-method rpm
+rm -f install-opentofu.sh
+
+# Assume role helper
+cat >/etc/profile.d/assume-tf-ci.sh <<EOP
+export AWS_REGION=${region}
+export AWS_PAGER=""
+assume_tf_ci() {
+  CREDS=$(aws sts assume-role --role-arn ${terraform_ci_role_arn} --role-session-name tfci-$$)
+  export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId)
+  export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey)
+  export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken)
+  echo "Assumed ${terraform_ci_role_arn}"
+}
+EOP
+
+systemctl enable amazon-ssm-agent
+systemctl start amazon-ssm-agent
+echo "Bootstrap complete" | logger
