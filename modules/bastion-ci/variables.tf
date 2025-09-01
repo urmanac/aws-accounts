@@ -44,3 +44,23 @@ variable "my_public_ssh_key" {
   description = "Public SSH key of the user who should get ec2-user access"
   type        = string
 }
+
+variable "my_wireguard_client_key" {
+  description = "Private key for the wireguard client"
+  type        = string
+}
+
+variable "my_wireguard_client_pub" {
+  description = "Public key for the client's wireguard key"
+  type        = string
+}
+
+variable "my_wireguard_server_pub" {
+  description = "Public key for the wireguard server"
+  type        = string
+}
+
+variable "my_wireguard_server_ipv6" {
+  description = "Public IPv6 address for the wireguard server"
+  type        = string
+}

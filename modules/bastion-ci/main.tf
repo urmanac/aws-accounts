@@ -93,13 +93,33 @@ resource "aws_launch_template" "bastion" {
               # Create SSH authorized_keys for ec2-user
               mkdir -p /home/ec2-user/.ssh
               echo "${var.my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
+              # echo "${var.my_wireguard_client_key}" > /root/client.key
+              # echo "${var.my_wireguard_client_pub}" > /root/client.pub
               chown -R ec2-user:ec2-user /home/ec2-user/.ssh
               chmod 700 /home/ec2-user/.ssh
               chmod 600 /home/ec2-user/.ssh/authorized_keys
 
               dnf update -y
-              dnf install -y git unzip jq
+              dnf install -y git unzip jq iptables wireguard-tools
               cd /root
+
+              # Without Wireguard to IPv4, could not install OpenTofu from IPv6
+              cat >/etc/wireguard/wg0.conf <<'EOP'
+              [Interface]
+              Address = 10.66.66.2/32, fd42:42:42::2/128
+              PrivateKey = ${var.my_wireguard_client_key}
+              # Optional: pick a DNS if you want the bastion to resolve via the server
+              # DNS = 1.1.1.1
+
+              [Peer]
+              # Your Debian server
+              PublicKey = ${var.my_wireguard_server_pub}
+              Endpoint = [${var.my_wireguard_server_ipv6}]:51820          # server's IPv6 address in brackets
+              AllowedIPs = 0.0.0.0/0, 10.66.66.0/24         # send ALL IPv4 via tunnel; keep IPv6 direct
+              PersistentKeepalive = 25
+              EOP
+              systemctl enable --now wg-quick@wg0
+
               # Download the installer script:
               curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
               # Alternatively: wget --secure-protocol=TLSv1_2 --https-only https://get.opentofu.org/install-opentofu.sh -O install-opentofu.sh
