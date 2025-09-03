@@ -87,6 +87,13 @@ resource "aws_launch_template" "bastion" {
     arn = aws_iam_instance_profile.bastion.arn
   }
 
+  metadata_options {
+    http_endpoint               = "enabled"   # allows IMDS
+    http_tokens                 = "required"  # enforce IMDSv2
+    http_protocol_ipv6           = "enabled"  # allow IPv6
+    http_put_response_hop_limit = 2           # standard
+  }
+
   network_interfaces {
     subnet_id                   = element(var.public_subnet_ids, 0)
     associate_public_ip_address = false
