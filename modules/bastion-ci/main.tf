@@ -62,6 +62,21 @@ resource "aws_iam_instance_profile" "bastion" {
 
 # Security group is now managed by the VPC module
 
+# Log group
+resource "aws_cloudwatch_log_group" "bastion" {
+  name              = "/bastion/logs"
+  retention_in_days = 30
+  tags = {
+    Name = "${var.name}-bastion"
+  }
+}
+
+# Policy attachment for CloudWatch agent
+resource "aws_iam_role_policy_attachment" "bastion_cwagent" {
+  role       = aws_iam_role.bastion_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 # Launch template for bastion
 resource "aws_launch_template" "bastion" {
   name_prefix   = "${var.name}-lt-"
@@ -70,6 +85,13 @@ resource "aws_launch_template" "bastion" {
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.bastion.arn
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"   # allows IMDS
+    http_tokens                 = "required"  # enforce IMDSv2
+    http_protocol_ipv6           = "enabled"  # allow IPv6
+    http_put_response_hop_limit = 2           # standard
   }
 
   network_interfaces {
