@@ -55,7 +55,7 @@ cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOP'
     "logs_collected": {
       "files": {
         "collect_list": [
-          { "file_path": "/var/log/messages", "log_group_name": "bastion", "log_stream_name": "{instance_id}" }
+          { "file_path": "/var/log/messages", "log_group_name": "/bastion/logs", "log_stream_name": "{instance_id}" }
         ]
       }
     }

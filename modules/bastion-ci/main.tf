@@ -62,6 +62,21 @@ resource "aws_iam_instance_profile" "bastion" {
 
 # Security group is now managed by the VPC module
 
+# Log group
+resource "aws_cloudwatch_log_group" "bastion" {
+  name              = "/bastion/logs"
+  retention_in_days = 30
+  tags = {
+    Name = "${var.name}-bastion"
+  }
+}
+
+# Policy attachment for CloudWatch agent
+resource "aws_iam_role_policy_attachment" "bastion_cwagent" {
+  role       = aws_iam_role.bastion_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 # Launch template for bastion
 resource "aws_launch_template" "bastion" {
   name_prefix   = "${var.name}-lt-"
