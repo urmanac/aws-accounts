@@ -26,6 +26,8 @@ PersistentKeepalive = 25
 EOP
 
 systemctl enable --now wg-quick@wg0
+# Do not route IMDS traffic over Wireguard!
+ip route add 169.254.169.254/32 dev ens5
 
 # Install OpenTofu
 curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
@@ -62,13 +64,6 @@ cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOP'
   }
 }
 EOP
-
-cat >/etc/profile.d/cwagent-ipv6.sh <<'EOP'
-export AWS_EC2_METADATA_SERVICE_ENDPOINT="http://[fd00:ec2::254]"
-EOP
-
-# Make it active immediately
-source /etc/profile.d/cwagent-ipv6.sh
 
 systemctl enable amazon-cloudwatch-agent
 systemctl start amazon-cloudwatch-agent
