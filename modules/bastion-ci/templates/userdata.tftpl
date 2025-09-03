@@ -9,7 +9,7 @@ chmod 700 /home/ec2-user/.ssh
 chmod 600 /home/ec2-user/.ssh/authorized_keys
 
 dnf update -y
-dnf install -y git unzip jq iptables wireguard-tools
+dnf install -y git unzip jq iptables wireguard-tools amazon-cloudwatch-agent
 cd /root
 
 # WireGuard config
@@ -32,6 +32,39 @@ curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.
 chmod +x install-opentofu.sh
 ./install-opentofu.sh --install-method rpm
 rm -f install-opentofu.sh
+
+# Enable CloudWatch
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOP'
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "metrics": {
+    "append_dimensions": {
+      "InstanceId": "$${aws:InstanceId}"
+    },
+    "metrics_collected": {
+      "mem": { "measurement": ["mem_used_percent"] },
+      "cpu": { "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"], "metrics_collection_interval": 60 },
+      "disk": { "measurement": ["used_percent"], "resources": ["*"] },
+      "net": { "measurement": ["bytes_in", "bytes_out"], "resources": ["*"] }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          { "file_path": "/var/log/messages", "log_group_name": "bastion", "log_stream_name": "{instance_id}" }
+        ]
+      }
+    }
+  }
+}
+EOP
+
+systemctl enable amazon-cloudwatch-agent
+systemctl start amazon-cloudwatch-agent
 
 # Assume role helper
 cat >/etc/profile.d/assume-tf-ci.sh <<EOP
