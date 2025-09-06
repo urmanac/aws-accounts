@@ -69,7 +69,7 @@ systemctl enable amazon-cloudwatch-agent
 systemctl start amazon-cloudwatch-agent
 
 # Assume role helper
-cat >/etc/profile.d/assume-tf-ci.sh <<EOP
+cat >/etc/profile.d/assume-tf-ci.sh <<'EOP'
 export AWS_REGION=${region}
 export AWS_PAGER=""
 assume_tf_ci() {
