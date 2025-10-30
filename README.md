@@ -2,12 +2,61 @@ This repo has been sanitized by BFG
 
 ## Quick Start
 
+### Legacy IAM User Access (Transitional)
 ```bash
 export AWS_PROFILE=sb-bootstrap
 export AWS_PROFILE=prod-bootstrap
 
 source ./get_mfa_session.sh
 aws_mfa
+```
+
+### Modern OIDC-based Access (Recommended)
+```bash
+# Assume roles via GitHub OIDC
+./scripts/aws-assume-role.sh ReadOnly sb
+./scripts/aws-assume-role.sh Developer sb
+./scripts/aws-assume-role.sh Admin prod
+
+# Generate AESR browser extension config
+./scripts/generate-aesr-config.sh sb
+./scripts/generate-aesr-config.sh prod
+```
+
+## Architecture Overview
+
+### Current State: Hybrid IAM + OIDC
+We are in transition from direct IAM user access to OIDC-based role assumption:
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   GitHub OIDC   │────│   AWS IAM Roles  │────│  AWS Resources  │
+│  (Primary IdP)  │    │  (6 Role Types)  │    │   (EC2, S3,...)  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+        │                       │
+        │              ┌─────────────────┐
+        │              │  Break-glass    │
+        └──────────────│   IAM Users     │
+                       │ (Emergency Only)│
+                       └─────────────────┘
+```
+
+### Target State: Multi-Provider OIDC
+```
+┌─────────────────┐
+│   GitHub OIDC   │────┐
+│   (Primary)     │    │
+└─────────────────┘    │    ┌──────────────────┐    ┌─────────────────┐
+                       ├────│   AWS IAM Roles  │────│  AWS Resources  │
+┌─────────────────┐    │    │  (6 Role Types)  │    │                 │
+│   GitLab OIDC   │────┤    └──────────────────┘    └─────────────────┘
+│ (Alternative 1) │    │
+└─────────────────┘    │
+                       │
+┌─────────────────┐    │
+│  Keycloak OIDC  │────┘
+│ (Alternative 2) │
+└─────────────────┘
 ```
 
 You must have AWS Credentials in a file in ~/.aws/credentials, or export them
