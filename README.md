@@ -65,128 +65,131 @@ in environment variables.
 The configuration in this Terraform module ensures that AWS Access Keys are
 limited when they have not yet MFA'ed. And we can have Test and Prod.
 
-## IAM Role-Based Access Control (RBAC) Architecture
+## OIDC-Based Identity Architecture
 
-### Current State
-We currently grant permissions directly to IAM users via group memberships. While this works, it violates the principle of least privilege and doesn't provide proper audit trails for different types of access.
+### Implemented Solution
+We have implemented a modern, vendor-independent identity architecture based on OIDC (OpenID Connect) federation with AWS IAM roles.
 
-### Proposed Improvement: Assumable Roles for Human Users
+#### Key Components
 
-We should implement a role-based access control system where:
+**1. OIDC Identity Providers** (`modules/oidc-identity/`)
+- **GitHub OIDC** (Primary): Integrated with `urmanac` and `kingdon-ci` organizations
+- **GitLab OIDC** (Alternative 1): Ready for future implementation
+- **Custom OIDC** (Alternative 2): Supports Keycloak, Auth0, or any OIDC provider
 
-1. **IAM users have minimal base permissions** (just enough to assume roles)
-2. **All real permissions are granted via assumable roles**
-3. **Each role represents a specific job function or security context**
-4. **Role assumptions are logged in CloudTrail for audit purposes**
-5. **AWS Extend Switch Roles (AESR) browser extension** provides easy context switching
+**2. Assumable Roles** (`modules/assumable-roles/`)
+- **ReadOnly** (4h sessions): Investigation, monitoring, compliance
+- **Billing** (2h sessions): Cost management and financial analysis  
+- **Security** (1h sessions): IAM management, security administration
+- **Developer** (8h sessions): Application deployment, no infrastructure changes
+- **Admin** (1h sessions): Full access for emergencies only
+- **CI** (12h sessions): Infrastructure-as-code operations
 
-### Proposed Role Structure
+**3. Break-glass IAM Users** (`modules/bootstrap-admin/`)
+- Minimal permissions (password change, MFA management, role assumption)
+- Emergency access when OIDC providers are unavailable
+- MFA-protected role assumption capability
 
-#### 1. `ReadOnly` Role
-- **Purpose**: Investigation, monitoring, compliance checking
-- **Permissions**: Read-only access across all AWS services
-- **Use Cases**: 
-  - Troubleshooting issues
-  - Cost analysis and optimization research
-  - Security posture review
-  - General exploration and learning
+### Vendor Independence Strategy
 
-#### 2. `Billing` Role  
-- **Purpose**: Financial management and cost control
-- **Permissions**: 
-  - Full access to Cost Explorer, Budgets, Billing
-  - Read access to resource inventory for cost attribution
-- **Use Cases**:
-  - Monthly cost reviews
-  - Budget setup and monitoring
-  - Cost optimization analysis
-  - Invoice and payment management
+#### Multi-Provider Support
+Our architecture supports multiple OIDC providers simultaneously:
+- **No single point of failure**: If GitHub is down, use GitLab or Keycloak
+- **Easy migration**: Switch providers without changing role structure
+- **Provider-specific use cases**: Different providers for different teams/purposes
 
-#### 3. `Security` Role
-- **Purpose**: Security administration and compliance
-- **Permissions**:
-  - IAM management (users, roles, policies)
-  - CloudTrail, Config, GuardDuty administration
-  - Security hub and findings management
-- **Use Cases**:
-  - User access management
-  - Security configuration changes
-  - Compliance monitoring and reporting
-  - Incident response and investigation
+#### Migration Paths
+- **GitHub → GitLab**: For cost optimization or feature requirements
+- **GitHub → Keycloak**: For complete vendor independence
+- **Multi-provider**: Parallel operation for redundancy
 
-#### 4. `Developer` Role
-- **Purpose**: Application deployment and management (not infrastructure)
-- **Permissions**:
-  - EC2 instance management (but not VPC/networking changes)
-  - Lambda function deployment
-  - RDS database management
-  - S3 bucket operations for application data
-  - Application-specific resource management
-- **Use Cases**:
-  - Deploying applications
-  - Managing application data
-  - Application troubleshooting
-  - Performance tuning
+### Integration with Existing Projects
 
-#### 5. `Admin` Role
-- **Purpose**: Full administrative access (emergency use only)
-- **Permissions**: AdministratorAccess (current level)
-- **Use Cases**:
-  - Emergency infrastructure changes
-  - Complex cross-service operations
-  - Account-level configuration changes
-  - Should be used sparingly with justification
+#### Kaniko-builder Dependency
+The kaniko-builder project's migration from GitLab to GitHub aligns perfectly with our OIDC strategy:
+- **Before**: Stored AWS credentials in GitLab secrets
+- **After**: Keyless authentication via GitHub OIDC
+- **Benefits**: Better security, audit trails, no credential rotation
 
-#### 6. `CI` Role (Enhanced)
-- **Purpose**: Infrastructure-as-code operations
-- **Permissions**: Infrastructure management via Terraform/OpenTofu
-- **Use Cases**:
-  - Terraform apply operations
-  - Infrastructure provisioning and changes
-  - CI/CD pipeline operations
-  - Automated deployments
+#### Current GitHub Organizations
+- **`urmanac`**: Primary organization for personal/main projects
+- **`kingdon-ci`**: CI/CD focused organization
+- **Repository Access**: Scoped to specific repositories within organizations
 
-### Implementation Plan
+### Security Features
 
-#### Phase 1: Role Creation
-1. Create the assumable roles with appropriate policies
-2. Configure trust relationships to allow assumption by IAM users
-3. Add MFA requirement for role assumption
-4. Test role assumption manually
+#### Principle of Least Privilege
+- Users have no direct AWS permissions
+- All access via time-limited role assumption
+- Role-specific permission boundaries
+- MFA required for sensitive operations
 
-#### Phase 2: User Permission Migration  
-1. Remove direct AdministratorAccess from user groups
-2. Grant users only the permissions needed to:
-   - Assume roles (with MFA)
-   - Change their own passwords
-   - Manage their own MFA devices
-3. Update scripts and documentation
+#### Audit and Compliance
+- Complete CloudTrail logging of all role assumptions
+- Clear attribution: OIDC token → User identity → AWS actions
+- Session-based access with defined expiration
+- No long-lived credentials in repositories
 
-#### Phase 3: AESR Configuration
-1. Generate AESR configuration file
-2. Document browser extension setup
-3. Provide role assumption examples for different contexts
+#### Regional and Temporal Controls
+- CI role restricted to specific AWS regions
+- Session duration limits based on role sensitivity
+- Time-based access patterns (business hours enforcement possible)
 
-#### Phase 4: Audit and Monitoring
-1. Set up CloudTrail log analysis for role assumptions
-2. Create dashboards for role usage patterns
-3. Regular access reviews and role refinement
+### Implementation Status
 
-### Benefits of This Approach
+#### ✅ Completed
+- [x] OIDC identity provider module with multi-provider support
+- [x] Six assumable roles with appropriate permissions and session limits
+- [x] Break-glass IAM user transition (removed direct AdministratorAccess)
+- [x] GitHub OIDC integration with urmanac/kingdon-ci organizations
+- [x] Local authentication scripts for role assumption
+- [x] AESR browser extension configuration generator
+- [x] Comprehensive documentation for all migration scenarios
 
-1. **Principle of Least Privilege**: Users only get permissions they need for specific tasks
-2. **Audit Trail**: Every privileged action is clearly attributed to a specific role/context
-3. **Temporal Scoping**: Role sessions expire, limiting blast radius of compromised credentials
-4. **Clear Intent**: Role names make it obvious what type of work is being performed
-5. **AESR Integration**: Easy context switching without complex credential management
-6. **Future-Proof**: Scales to organization-level identity management (IAM Identity Center)
+#### 🔄 Next Steps
+1. **Deploy the new modules**: Run `terraform apply` to create OIDC providers and roles
+2. **Test GitHub OIDC**: Verify authentication with personal GitHub account
+3. **Migrate workflows**: Update CI/CD pipelines to use OIDC instead of IAM keys
+4. **Enable alternative providers**: Configure GitLab/Keycloak as needed
+5. **Deprecate IAM user access**: Remove direct permissions after OIDC validation
 
-### Security Considerations
+### Quick Reference
 
-- All role assumptions require MFA
-- Role sessions are time-limited (1-12 hours based on role type)
-- CloudTrail logs provide complete audit trail
-- No standing privileges - all access is explicitly assumed
-- Follows AWS security best practices for human user access
+#### Essential Commands
+```bash
+# Assume different roles for different tasks
+./scripts/aws-assume-role.sh ReadOnly sb      # Investigation
+./scripts/aws-assume-role.sh Billing prod     # Cost analysis  
+./scripts/aws-assume-role.sh Developer sb     # App deployment
+./scripts/aws-assume-role.sh CI sb             # Infrastructure changes
+./scripts/aws-assume-role.sh Admin prod       # Emergency only
+
+# Generate browser extension config
+./scripts/generate-aesr-config.sh sb
+./scripts/generate-aesr-config.sh prod
+```
+
+#### Environment Files
+```bash
+# .env.sb
+ACCOUNT_ID=123456789012
+
+# .env.prod  
+ACCOUNT_ID=987654321098
+```
+
+#### GitHub Actions Integration
+```yaml
+- name: Configure AWS Credentials
+  uses: aws-actions/configure-aws-credentials@v3
+  with:
+    role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.ENVIRONMENT }}-CI
+    role-session-name: github-ci-${{ github.run_id }}
+```
+
+### Documentation
+- **[GitHub OIDC Integration](docs/github-oidc-integration.md)**: Complete setup guide
+- **[Identity Provider Migration](docs/identity-provider-migration.md)**: Vendor independence strategies
+- **[Module Documentation](modules/*/README.md)**: Technical implementation details
 
 --Product of various AI assistants and human refinement
