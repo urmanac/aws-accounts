@@ -1,40 +1,91 @@
-# 0. Adopt existing IAM user
+# 0. Adopt existing IAM user (now for break-glass access only)
 resource "aws_iam_user" "iamroot" {
   name = "${var.admin_username}"
   tags = {
     Environment = var.environment
-    Role        = "admin"
+    Role        = "break-glass-admin"
+    Purpose     = "Emergency access when OIDC is unavailable"
   }
 }
 
-# 1. Create IAM user
+# 1. Create IAM user (now for break-glass access only)
 resource "aws_iam_user" "admin" {
   name = "${var.admin_username}-${var.environment}"
   tags = {
     Environment = var.environment
-    Role        = "admin"
+    Role        = "break-glass-admin"
+    Purpose     = "Emergency access when OIDC is unavailable"
   }
 }
 
-# 2. Group for admins
-resource "aws_iam_group" "admins" {
-  name = "admins-${var.environment}"
+# 2. Group for break-glass admins (minimal permissions)
+resource "aws_iam_group" "break_glass_admins" {
+  name = "break-glass-admins-${var.environment}"
 }
 
-resource "aws_iam_group_policy_attachment" "admin_access" {
-  group      = aws_iam_group.admins.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+# Break-glass users can only change passwords, manage MFA, and assume roles
+resource "aws_iam_policy" "break_glass_base_permissions" {
+  name        = "BreakGlassBasePermissions-${var.environment}"
+  description = "Minimal permissions for break-glass IAM users in ${var.environment}"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowSelfManagement"
+        Effect = "Allow"
+        Action = [
+          "iam:ChangePassword",
+          "iam:GetAccountPasswordPolicy",
+          "iam:GetAccountSummary",
+          "iam:GetUser",
+          "iam:ListVirtualMFADevices",
+          "iam:ListMFADevices",
+          "iam:ResyncMFADevice",
+          "iam:CreateVirtualMFADevice",
+          "iam:EnableMFADevice",
+          "iam:DeactivateMFADevice",
+          "iam:DeleteVirtualMFADevice"
+        ]
+        Resource = [
+          "arn:aws:iam::${var.account_id}:user/$${aws:username}",
+          "arn:aws:iam::${var.account_id}:mfa/$${aws:username}"
+        ]
+      },
+      {
+        Sid    = "AllowSTSOperations"
+        Effect = "Allow"
+        Action = [
+          "sts:GetSessionToken",
+          "sts:GetCallerIdentity"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
-# 3. Membership
+resource "aws_iam_group_policy_attachment" "break_glass_base" {
+  group      = aws_iam_group.break_glass_admins.name
+  policy_arn = aws_iam_policy.break_glass_base_permissions.arn
+}
+
+# Attach break-glass role assumption policy if provided
+resource "aws_iam_group_policy_attachment" "break_glass_assume_roles" {
+  count      = var.break_glass_assume_roles_policy_arn != null ? 1 : 0
+  group      = aws_iam_group.break_glass_admins.name
+  policy_arn = var.break_glass_assume_roles_policy_arn
+}
+
+# 3. Membership (break-glass group instead of admin group)
 resource "aws_iam_user_group_membership" "admin_membership" {
   user   = aws_iam_user.admin.name
-  groups = [aws_iam_group.admins.name]
+  groups = [aws_iam_group.break_glass_admins.name]
 }
 
 resource "aws_iam_user_group_membership" "iamroot_membership" {
   user   = aws_iam_user.iamroot.name
-  groups = [aws_iam_group.admins.name]
+  groups = [aws_iam_group.break_glass_admins.name]
 }
 
 # 4. MFA enforcement policy
