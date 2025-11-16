@@ -15,6 +15,35 @@ module "bootstrap_admin" {
   source      = "./modules/bootstrap-admin"
   environment = var.environment
   account_id  = var.account_map[var.environment]
+  
+  # Connect break-glass users to assumable roles
+  break_glass_assume_roles_policy_arn = module.assumable_roles.break_glass_policy_arn
+}
+
+# OIDC Identity Providers
+module "oidc_identity" {
+  source      = "./modules/oidc-identity"
+  environment = var.environment
+  
+  # Enable GitHub OIDC (primary)
+  enable_github_oidc   = true
+  github_organizations = ["urmanac", "kingdon-ci"]
+  
+  # Future: Enable GitLab and Custom OIDC
+  enable_gitlab_oidc = false
+  enable_custom_oidc = false
+}
+
+# Assumable Roles for RBAC
+module "assumable_roles" {
+  source = "./modules/assumable-roles"
+  
+  environment       = var.environment
+  role_prefix      = "${var.environment}-"
+  oidc_trust_policy = module.oidc_identity.multi_provider_trust_policy
+  
+  # Regional restrictions for CI role
+  allowed_regions = ["us-east-1", "eu-west-1"]
 }
 
 
