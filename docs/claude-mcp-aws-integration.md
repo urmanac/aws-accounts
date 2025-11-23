@@ -43,9 +43,7 @@ This document describes the AWS MCP (Model Context Protocol) server integration 
       "env": {
         "AWS_REGION": "eu-west-1",
         "AWS_PROFILE": "sb-terraform-mfa-session"
-      },
-      "disabled": false,
-      "autoApprove": []
+      }
     }
   },
   "preferences": {
@@ -56,12 +54,13 @@ This document describes the AWS MCP (Model Context Protocol) server integration 
 
 ### Configuration Fields
 
+**Required fields:**
 - **command**: `uvx` - Uses pipx/uvx to run the Python package without global install
 - **args**: Package identifier from PyPI (`awslabs.aws-api-mcp-server@latest`)
 - **env.AWS_REGION**: Default region for AWS operations (our primary: `eu-west-1`)
 - **env.AWS_PROFILE**: AWS credentials profile to use
-- **disabled**: Set to `true` to temporarily disable without removing config
-- **autoApprove**: Array of operations that don't require confirmation (currently empty for safety)
+
+**Note**: Earlier versions of this doc mentioned `disabled` and `autoApprove` fields - these were speculative and do not actually work. To disable the MCP server, you must remove the entire server block from the config and restart Claude Desktop.
 
 ## Authentication Setup
 
@@ -208,17 +207,30 @@ For security and safety:
 ### "MCP Server Stuck Connected"
 
 **Symptoms:**
-- Can't disable/remove AWS MCP from Claude settings
-- Server appears connected even after config removal
+- MCP server still appears in Claude's available tools
+- Server remains functional even after config changes
+
+**Root Cause:**
+- MCP servers are loaded when Claude Desktop starts
+- Config changes only take effect after a complete restart
+- There is no "disabled" flag that works without restart
 
 **Solutions:**
-1. Edit config file directly: Set `"disabled": true`
-2. Restart Claude Desktop completely
-3. Remove entire `awslabs.aws-api-mcp-server` block from config
-4. Clear Claude cache (if restart doesn't work):
+1. Remove entire `awslabs.aws-api-mcp-server` block from config file:
+   ```bash
+   # Edit: ~/Library/Application Support/Claude/claude_desktop_config.json
+   # Remove the entire "awslabs.aws-api-mcp-server" section
+   ```
+2. **Completely quit and restart Claude Desktop** (not just close window)
+   - On macOS: Cmd+Q to quit, then reopen
+   - Verify it's fully quit from Activity Monitor if needed
+3. If still showing, clear Claude cache:
    ```bash
    rm -rf ~/Library/Application\ Support/Claude/mcp*
    ```
+   Then restart Claude Desktop again
+
+**Important**: Setting `"disabled": true` does NOT work - you must remove the config block entirely and restart.
 
 ## Integration with Other Tools
 
@@ -272,7 +284,7 @@ Stakpak promises higher rate limits and potentially better AWS integration. Cons
 2. **MFA Always**: Never skip MFA for production accounts
 3. **Short Sessions**: 1-hour sessions reduce exposure window
 4. **Review Commands**: Check what Claude proposes before execution
-5. **Disable When Not Using**: Set `"disabled": true` in config
+5. **Disconnect When Not Using**: Remove server block from config and restart Claude Desktop
 6. **Separate Profiles**: Use dedicated profile for MCP (`*-mfa-session`)
 7. **Audit Trails**: CloudTrail logs all API calls from MCP
 
