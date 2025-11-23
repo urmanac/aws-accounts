@@ -64,6 +64,19 @@ make nuke-costs
 
 **Implementation**: Update existing bastion module user-data
 
+**Bastion Schedule**: 
+- **Active Hours**: 7am-12pm or 8am-1pm (check ASG schedule)
+- **Daily Pattern**: ASG scales 0→1 at start, 1→0 at end
+- **Implication**: All experiments must happen during active window OR manually scale ASG
+- **Cost Benefit**: ~83% cost savings vs 24/7 operation
+
+**EBS Cost Analysis**:
+- Default bastion disk: Unknown, likely 8-20GB
+- Required for registry cache: +50GB recommended
+- Cost: $0.08/GB/month × 50GB = $4/month
+- Prorated (5hrs/24hrs): $4 × 0.208 = **$0.83/month**
+- **Verdict**: Negligible cost, much cheaper than ECR (no free tier)
+
 ### Thread 2: Talos Node Infrastructure
 
 **Goal**: 3 EC2 instances (1 gateway, 2 compute) that boot-to-talos
@@ -71,15 +84,19 @@ make nuke-costs
 #### Node Configuration
 ```
 talos-gateway-1: 10.10.0.101 (t4g.medium)
-  - Image: ghcr.io/urmanac/cozystack-moon-and-back/talos-arm64-gateway:latest
+  - Image: ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-tailscale/talos:v1.11.5
   - Extensions: spin, tailscale, drbd, zfs
+  - Role: Subnet router + compute
   
 talos-compute-2: 10.10.0.102 (t4g.medium)
-  - Image: ghcr.io/urmanac/cozystack-moon-and-back/talos-arm64-compute:latest
+  - Image: ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-only/talos:v1.11.5
   - Extensions: spin, drbd, zfs
+  - Role: Compute only
 
 talos-compute-3: 10.10.0.103 (t4g.medium)
-  - Same as compute-2
+  - Image: ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-only/talos:v1.11.5
+  - Extensions: spin, drbd, zfs
+  - Role: Compute only
 ```
 
 #### Security Group Requirements
@@ -161,31 +178,45 @@ resource "aws_network_interface" "bastion_eni" {
 }
 ```
 
-### Step 1.3: Registry Option A - ECR Pull-Through Cache
+### Step 1.3: Registry Cache on Bastion (Docker registry:2)
 
-**Pros**: Native AWS, easy billing, automatic teardown
-**Cons**: Slightly more complex setup
+**Selected Strategy**: Docker registry:2 container on bastion
 
-```hcl
-resource "aws_ecr_pull_through_cache_rule" "ghcr" {
-  ecr_repository_prefix = "ghcr"
-  upstream_registry_url = "ghcr.io"
-}
+**Decision Rationale**:
+- ✅ Bastion already has scheduled deletion (automatic cost control)
+- ✅ ECR has NO free tier (would be ongoing storage costs)
+- ✅ Bastion EBS resize is cheap: ~$0.83/month for 50GB
+- ✅ Matches home lab setup (operational consistency)
+- ✅ Simple teardown via existing ASG schedule
 
-# Bastion user-data references ECR endpoint
-```
-
-### Step 1.4: Registry Option B - Docker registry:2
-
-**Pros**: Simple, works exactly like home lab
-**Cons**: Manual container management
-
+**Bastion User-Data Addition**:
 ```bash
-# In bastion user-data
-docker run -d -p 5000:5000 \
+#!/bin/bash
+# ... existing bastion setup ...
+
+# Install Docker if not present
+if ! command -v docker &> /dev/null; then
+    yum install -y docker
+    systemctl enable docker
+    systemctl start docker
+fi
+
+# Start GHCR pull-through cache
+docker run -d --restart unless-stopped \
+  -p 5000:5000 \
+  -v /var/lib/registry:/var/lib/registry \
   -e REGISTRY_PROXY_REMOTEURL=https://ghcr.io \
   --name ghcr-cache \
   registry:2
+
+# Health check
+for i in {1..30}; do
+    if curl -sf http://localhost:5000/v2/ > /dev/null; then
+        echo "Registry cache is healthy"
+        break
+    fi
+    sleep 2
+done
 ```
 
 ### Step 1.5: Talos Node Resources
@@ -210,9 +241,12 @@ resource "aws_launch_template" "talos_node" {
   instance_type = "t4g.medium"
   
   user_data = base64encode(templatefile("${path.module}/templates/boot-to-talos.sh.tpl", {
-    talos_image = "ghcr.io/urmanac/cozystack-moon-and-back/talos-arm64-${each.value.variant}:latest"
-    node_ip     = each.value.private_ip
-    node_name   = each.value.name
+    talos_image = each.value.variant == "gateway" ? 
+      "ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-tailscale/talos:v1.11.5" : 
+      "ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-only/talos:v1.11.5"
+    node_ip          = each.value.private_ip
+    node_name        = each.value.name
+    registry_mirror  = "http://10.10.0.100:5000"
   }))
   
   network_interfaces {
@@ -301,24 +335,30 @@ kubectl get nodes
 
 ## Questions to Resolve
 
-### Critical (Blocking)
+### Critical (RESOLVED)
 
-1. **Subnet ID**: What's the actual subnet-id for 10.10.0.0/24?
-   ```bash
-   aws ec2 describe-subnets --filters "Name=cidr-block,Values=10.10.0.0/24"
-   ```
+1. **Subnet ID**: ✅ CONFIRMED
+   - Public subnet: `subnet-0fb2c632ccc6d99e5` (10.10.0.0/24, eu-west-1a)
+   - Has IPv6: `2a05:d018:106c:7800::/64`
+   - Route table: `rtb-0cbcf22ea88e98b03` (sandbox-eu-public-rt)
+   - VPC: `vpc-04af837e642c001c6` (10.10.0.0/16)
 
-2. **Existing Bastion**: Is bastion already running, or do we create it?
-   - If exists: What's its instance ID for ENI attachment?
-   - If new: Do we use ASG or single instance?
+2. **Existing Bastion**: ✅ CONFIRMED
+   - Lives in ASG, scaled 0→1 on schedule (7am-12pm or 8am-1pm)
+   - Must work during scheduled window OR manually scale ASG
+   - Ephemeral - deleted daily, so no persistent storage concerns
+   - ENI attachment handled by existing user-data
 
-3. **Registry Strategy**: ECR pull-through cache or Docker registry:2?
-   - ECR: More AWS-native, easier billing
-   - Docker: Simpler, matches home lab
+3. **Registry Strategy**: ✅ DECISION: Docker registry:2 on bastion
+   - Rationale: Bastion already has scheduled deletion (no persistent cost)
+   - ECR has NO free tier, would be ongoing cost
+   - Bastion EBS resize is cheap and we control it
+   - Matches home lab setup perfectly
 
-4. **Talos Images**: Verify GHCR path
-   - Current: `ghcr.io/urmanac/cozystack-moon-and-back/talos-arm64-*:latest`
-   - Are these already built and pushed?
+4. **Talos Images**: ✅ CONFIRMED
+   - Gateway: `ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-tailscale/talos:v1.11.5`
+   - Compute: `ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-only/talos:v1.11.5`
+   - Published and ready to use
 
 ### Medium Priority
 
@@ -360,8 +400,8 @@ aws-accounts/
 module "cozy_demo" {
   source = "./modules/cozy-demo"
   
-  vpc_id                 = var.sandbox_vpc_id
-  subnet_id              = var.sandbox_public_subnet_id
+  vpc_id                 = "vpc-04af837e642c001c6"  # sandbox-eu-vpc
+  subnet_id              = "subnet-0fb2c632ccc6d99e5"  # sandbox-eu-public-0 (10.10.0.0/24)
   bastion_security_groups = var.bastion_security_groups
   
   talos_nodes = {
