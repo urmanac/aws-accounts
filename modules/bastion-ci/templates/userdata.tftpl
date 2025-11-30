@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Disable ECS agent (we don't need it on bastion)
+systemctl stop ecs || true
+systemctl disable ecs || true
+docker stop ecs-agent || true
+docker rm ecs-agent || true
+
 # Create SSH authorized_keys for ec2-user
 mkdir -p /home/ec2-user/.ssh
 echo "${my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys

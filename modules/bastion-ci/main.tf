@@ -90,7 +90,7 @@ resource "aws_launch_template" "bastion" {
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
-      volume_size = 4
+      volume_size = 32  # Increased to accommodate AMI snapshot size
       volume_type = "gp3"
       encrypted   = true
       delete_on_termination = true
@@ -139,7 +139,7 @@ resource "aws_autoscaling_group" "bastion" {
     create_before_destroy = true
   }
 
-  desired_capacity    = 0
+  desired_capacity    = 1
   max_size            = 1
   min_size            = 0
   vpc_zone_identifier  = var.public_subnet_ids
@@ -172,7 +172,7 @@ resource "aws_autoscaling_schedule" "stop" {
   min_size               = 0
   max_size               = 1
   desired_capacity       = 0
-  recurrence             = "0 0 * * *" # 7 PM US/Eastern == 0 UTC next day
+  recurrence             = "0 23 * * *" # 7 PM US/Eastern == 23 UTC (was wrong before)
   autoscaling_group_name = aws_autoscaling_group.bastion.name
 }
 
