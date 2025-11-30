@@ -62,6 +62,18 @@ resource "aws_iam_instance_profile" "bastion" {
 
 # Security group is now managed by the VPC module
 
+# Dedicated ENI with fixed IP for bastion
+resource "aws_network_interface" "bastion_eni" {
+  subnet_id         = element(var.public_subnet_ids, 0)
+  private_ips       = ["10.10.1.100"]
+  security_groups   = [var.bastion_security_group_id, var.ssm_security_group_id]
+  source_dest_check = false  # Enable IP forwarding for WireGuard
+
+  tags = {
+    Name = "${var.name}-bastion-eni"
+  }
+}
+
 # Log group
 resource "aws_cloudwatch_log_group" "bastion" {
   name              = "/bastion/logs"
@@ -105,10 +117,9 @@ resource "aws_launch_template" "bastion" {
   }
 
   network_interfaces {
-    subnet_id                   = element(var.public_subnet_ids, 0)
-    associate_public_ip_address = false
-    ipv6_address_count          = 1
-    security_groups             = [var.bastion_security_group_id, var.ssm_security_group_id]
+    network_interface_id        = aws_network_interface.bastion_eni.id
+    device_index                = 0
+    delete_on_termination       = false
   }
 
   tag_specifications {

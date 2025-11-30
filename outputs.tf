@@ -32,6 +32,6 @@ output "talos_security_group_id" {
 }
 
 output "registry_cache_endpoint" {
-  value       = "10.10.1.100:5000"  # Bastion private IP with registry cache
+  value       = "${module.bastion_ci.bastion_private_ip}:5000"  # Bastion private IP with registry cache
   description = "Internal registry cache endpoint for GHCR pull-through"
 }
