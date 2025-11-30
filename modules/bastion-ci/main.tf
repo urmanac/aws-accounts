@@ -121,6 +121,7 @@ resource "aws_launch_template" "bastion" {
     network_interface_id        = aws_network_interface.bastion_eni.id
     device_index                = 0
     delete_on_termination       = false
+    associate_public_ip_address = false  # Ensure no public IPv4 (IPv6-only architecture)
   }
 
   tag_specifications {
@@ -142,7 +143,7 @@ resource "aws_launch_template" "bastion" {
   }))
 }
 
-# Direct EC2 instance (no ASG needed for single fixed instance)
+# Direct EC2 instance using launch template (for proper network configuration)
 resource "aws_instance" "bastion" {
   launch_template {
     id      = aws_launch_template.bastion.id
