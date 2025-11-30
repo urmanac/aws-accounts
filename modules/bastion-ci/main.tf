@@ -90,28 +90,6 @@ resource "aws_iam_role_policy_attachment" "bastion_cwagent" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
-# Policy for ENI attachment/detachment
-resource "aws_iam_role_policy" "eni_management" {
-  name = "${var.name}-eni-management"
-  role = aws_iam_role.bastion_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:AttachNetworkInterface",
-          "ec2:DetachNetworkInterface", 
-          "ec2:DescribeInstances",
-          "ec2:DescribeNetworkInterfaces"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 # Launch template for bastion
 resource "aws_launch_template" "bastion" {
   name_prefix   = "${var.name}-lt-"
@@ -139,7 +117,11 @@ resource "aws_launch_template" "bastion" {
     http_put_response_hop_limit = 2           # standard
   }
 
-  # Remove network_interfaces block - will be attached via user data
+  network_interfaces {
+    network_interface_id        = aws_network_interface.bastion_eni.id
+    device_index                = 0
+    delete_on_termination       = false
+  }
 
   tag_specifications {
     resource_type = "instance"
@@ -157,54 +139,75 @@ resource "aws_launch_template" "bastion" {
     terraform_ci_role_arn     = aws_iam_role.terraform_ci.arn
     cozystack_ghcr_username   = var.cozystack_ghcr_username
     cozystack_ghcr_token      = var.cozystack_ghcr_token
-    bastion_eni_id            = aws_network_interface.bastion_eni.id
   }))
 }
 
-# Auto Scaling group
-resource "aws_autoscaling_group" "bastion" {
-  name = "${var.name}-asg"
-
-  lifecycle {
-    ignore_changes = [name]
-    create_before_destroy = true
-  }
-
-  desired_capacity    = 1
-  max_size            = 1
-  min_size            = 0
-  vpc_zone_identifier  = [var.public_subnet_ids[1]]  # Use same subnet as ENI
-
+# Direct EC2 instance (no ASG needed for single fixed instance)
+resource "aws_instance" "bastion" {
   launch_template {
     id      = aws_launch_template.bastion.id
     version = "$Latest"
   }
 
-  tag {
-    key                 = "Name"
-    value               = "${var.name}-bastion"
-    propagate_at_launch = true
+  tags = {
+    Name = "${var.name}-bastion"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
-# Scheduled actions: start at 7 AM, stop at 7 PM EST daily (extended for cozystack conference week)
-resource "aws_autoscaling_schedule" "start" {
-  scheduled_action_name  = "${var.name}-start"
-  min_size               = 0
-  max_size               = 1
-  desired_capacity       = 1
-  recurrence             = "0 12 * * *" # 7 AM EST = 12 UTC
-  autoscaling_group_name = aws_autoscaling_group.bastion.name
-}
+# Scheduled actions using EventBridge + Lambda (replacing ASG schedules)
+# Note: This would need additional implementation for start/stop scheduling
+# For now, instance will run continuously
 
-resource "aws_autoscaling_schedule" "stop" {
-  scheduled_action_name  = "${var.name}-stop"
-  min_size               = 0
-  max_size               = 1
-  desired_capacity       = 0
-  recurrence             = "0 0 * * *" # 7 PM EST = 0 UTC next day (midnight UTC)
-  autoscaling_group_name = aws_autoscaling_group.bastion.name
-}
+# Auto Scaling group (REPLACED WITH DIRECT INSTANCE)
+# resource "aws_autoscaling_group" "bastion" {
+#   name = "${var.name}-asg"
+
+#   lifecycle {
+#     ignore_changes = [name]
+#     create_before_destroy = true
+#   }
+
+#   desired_capacity         = 1
+#   max_size                = 1
+#   min_size                = 0
+#   availability_zones      = [data.aws_subnet.eni_subnet.availability_zone]  # Use AZ from ENI subnet
+
+#   launch_template {
+#     id      = aws_launch_template.bastion.id
+#     version = "$Latest"
+#   }
+
+#   tag {
+#     key                 = "Name"
+#     value               = "${var.name}-bastion"
+#     propagate_at_launch = true
+#   }
+# }
+
+# Scheduled actions: start at 7 AM, stop at 7 PM EST daily (extended for cozystack conference week)
+# NOTE: With direct EC2 instance, scheduling would need EventBridge + Lambda implementation
+# For now, instance runs continuously for cozystack deployment
+# resource "aws_autoscaling_schedule" "start" {
+#   scheduled_action_name  = "${var.name}-start"
+#   min_size               = 0
+#   max_size               = 1
+#   desired_capacity       = 1
+#   recurrence             = "0 12 * * *" # 7 AM EST = 12 UTC
+#   autoscaling_group_name = aws_autoscaling_group.bastion.name
+# }
+
+# resource "aws_autoscaling_schedule" "stop" {
+#   scheduled_action_name  = "${var.name}-stop"
+#   min_size               = 0
+#   max_size               = 1
+#   desired_capacity       = 0
+#   recurrence             = "0 0 * * *" # 7 PM EST = 0 UTC next day (midnight UTC)
+#   autoscaling_group_name = aws_autoscaling_group.bastion.name
+# }
 
 # Find Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux" {
@@ -222,5 +225,10 @@ data "aws_ami" "amazon_linux" {
     name   = "virtualization-type"
     values = ["hvm"]
   }
+}
+
+# Get subnet info for ENI placement
+data "aws_subnet" "eni_subnet" {
+  id = var.public_subnet_ids[1]
 }
 

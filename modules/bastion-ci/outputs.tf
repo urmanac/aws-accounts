@@ -1,5 +1,5 @@
-output "asg_name" {
-  value = aws_autoscaling_group.bastion.name
+output "bastion_instance_id" {
+  value = aws_instance.bastion.id
 }
 
 output "bastion_instance_role_arn" {

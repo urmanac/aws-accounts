@@ -1,32 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Get instance metadata
-INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-
-# Attach the dedicated ENI (this replaces the default ENI)
-ENI_ID="${bastion_eni_id}"
-echo "Attaching ENI $ENI_ID to instance $INSTANCE_ID" | logger
-
-# Detach default ENI first (device index 0)
-DEFAULT_ENI=$(aws ec2 describe-instances --region $REGION --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' --output text)
-ATTACHMENT_ID=$(aws ec2 describe-instances --region $REGION --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].NetworkInterfaces[0].Attachment.AttachmentId' --output text)
-
-aws ec2 detach-network-interface --region $REGION --attachment-id $ATTACHMENT_ID
-sleep 10
-
-# Attach our dedicated ENI
-aws ec2 attach-network-interface --region $REGION --network-interface-id $ENI_ID --instance-id $INSTANCE_ID --device-index 0
-sleep 10
-
-# Ensure no public IPv4 is associated with our ENI (IPv6-only architecture)
-echo "Ensuring IPv6-only configuration (no public IPv4)" | logger
-
-# Restart networking to pick up new IP
-systemctl restart NetworkManager
-sleep 5
-
 # Disable ECS agent (we don't need it on bastion)
 systemctl stop ecs || true
 systemctl disable ecs || true
