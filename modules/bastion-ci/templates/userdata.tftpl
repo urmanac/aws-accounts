@@ -79,6 +79,7 @@ cat >/etc/wireguard/wg0.conf <<EOP
 [Interface]
 Address = 10.66.66.2/32, fd42:42:42::2/128
 PrivateKey = ${my_wireguard_client_key}
+MTU = 1420
 
 [Peer]
 PublicKey = ${my_wireguard_server_pub}
@@ -97,6 +98,13 @@ ip route add 169.254.169.254/32 dev ens5 2>/dev/null || true
 
 # Now start WireGuard - it will install itself as the default route
 systemctl enable --now wg-quick@wg0
+
+# Ensure WireGuard default route is installed (fallback if wg-quick didn't do it)
+sleep 5
+if ! ip route show default | grep -q wg0; then
+  echo "Installing WireGuard default route manually" | logger
+  ip route add default dev wg0
+fi
 
 # Verify routing
 echo "=== Routing table after WireGuard setup ===" | logger
