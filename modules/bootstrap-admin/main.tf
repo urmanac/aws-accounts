@@ -1,3 +1,6 @@
+# Get current AWS account ID
+data "aws_caller_identity" "current" {}
+
 # 0. Adopt existing IAM user (now for break-glass access only)
 resource "aws_iam_user" "iamroot" {
   name = "${var.admin_username}"
@@ -48,8 +51,8 @@ resource "aws_iam_policy" "break_glass_base_permissions" {
           "iam:DeleteVirtualMFADevice"
         ]
         Resource = [
-          "arn:aws:iam::${var.account_id}:user/$${aws:username}",
-          "arn:aws:iam::${var.account_id}:mfa/$${aws:username}"
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/$${aws:username}",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:mfa/$${aws:username}"
         ]
       },
       {

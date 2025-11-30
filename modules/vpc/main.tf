@@ -34,6 +34,12 @@ variable "enable_bastion_private_networking" {
   default     = false
 }
 
+variable "enable_talos_networking" {
+  type        = bool
+  description = "Enable networking components required for Talos Kubernetes clusters"
+  default     = false
+}
+
 provider "aws" {
   alias  = "this"
   region = var.region
@@ -136,15 +142,93 @@ resource "aws_security_group" "endpoints" {
   }
 }
 
+# Security group for Talos Kubernetes cluster
+resource "aws_security_group" "talos_cluster" {
+  count       = var.enable_talos_networking ? 1 : 0
+  name        = "${var.name}-talos-cluster-sg"
+  description = "Security group for Talos Kubernetes cluster communication"
+  vpc_id      = aws_vpc.this.id
+
+  # Kubernetes API server
+  ingress {
+    description = "Kubernetes API"
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # Talos API (apid)
+  ingress {
+    description = "Talos API (apid)"
+    from_port   = 50000
+    to_port     = 50000
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # Talos API (trustd)
+  ingress {
+    description = "Talos API (trustd)"
+    from_port   = 50001
+    to_port     = 50001
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # etcd peer communication
+  ingress {
+    description = "etcd peer"
+    from_port   = 2379
+    to_port     = 2380
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # kubelet API
+  ingress {
+    description = "kubelet API"
+    from_port   = 10250
+    to_port     = 10250
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # Registry cache access from cluster nodes
+  ingress {
+    description = "Registry cache"
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  # All outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name = "${var.name}-talos-cluster-sg"
+    Purpose = "Talos Kubernetes cluster communication"
+  }
+}
+
 # Security group for bastion hosts (only created if bastion networking is enabled)
+# Note: ingress rules are managed externally via update_ssh_access.sh
 resource "aws_security_group" "bastion" {
   count       = var.enable_bastion_networking ? 1 : 0
   name        = "${var.name}-bastion-sg"
   description = "Security group for bastion hosts"
   vpc_id      = aws_vpc.this.id
 
+  # Initial ingress rule - will be replaced by update_ssh_access.sh
   ingress {
-    description = "SSH from anywhere"
+    description = "SSH from anywhere (managed externally)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -158,6 +242,11 @@ resource "aws_security_group" "bastion" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
+  }
+
+  # Ignore changes to ingress rules - managed by update_ssh_access.sh
+  lifecycle {
+    ignore_changes = [ingress]
   }
 
   tags = {
@@ -217,4 +306,9 @@ output "ssm_security_group_id" {
 output "bastion_security_group_id" {
   description = "The ID of the bastion security group (only available if bastion networking is enabled)"
   value       = var.enable_bastion_networking ? aws_security_group.bastion[0].id : null
+}
+
+output "talos_cluster_security_group_id" {
+  description = "The ID of the Talos cluster security group (only available if Talos networking is enabled)"
+  value       = var.enable_talos_networking ? aws_security_group.talos_cluster[0].id : null
 }

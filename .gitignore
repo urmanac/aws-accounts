@@ -9,7 +9,7 @@
 /.sb.tfstate.lock.info
 
 # Stakpak local files
-.stakpak
+.stakpak/session*
 
 # Environments (not that secret - just account numbers)
 /.env.prod

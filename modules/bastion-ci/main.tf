@@ -90,7 +90,7 @@ resource "aws_launch_template" "bastion" {
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
-      volume_size = 4
+      volume_size = 32  # Increased to accommodate AMI snapshot size
       volume_type = "gp3"
       encrypted   = true
       delete_on_termination = true
@@ -119,12 +119,14 @@ resource "aws_launch_template" "bastion" {
   }
 
   user_data = base64encode(templatefile("${path.module}/templates/userdata.tftpl", {
-    my_public_ssh_key     = var.my_public_ssh_key
-    my_wireguard_client_key = var.my_wireguard_client_key
-    my_wireguard_server_pub = var.my_wireguard_server_pub
-    my_wireguard_server_ipv6 = var.my_wireguard_server_ipv6
-    region                = var.region
-    terraform_ci_role_arn = aws_iam_role.terraform_ci.arn
+    my_public_ssh_key         = var.my_public_ssh_key
+    my_wireguard_client_key   = var.my_wireguard_client_key
+    my_wireguard_server_pub   = var.my_wireguard_server_pub
+    my_wireguard_server_ipv6  = var.my_wireguard_server_ipv6
+    region                    = var.region
+    terraform_ci_role_arn     = aws_iam_role.terraform_ci.arn
+    cozystack_ghcr_username   = var.cozystack_ghcr_username
+    cozystack_ghcr_token      = var.cozystack_ghcr_token
   }))
 }
 
@@ -137,7 +139,7 @@ resource "aws_autoscaling_group" "bastion" {
     create_before_destroy = true
   }
 
-  desired_capacity    = 0
+  desired_capacity    = 1
   max_size            = 1
   min_size            = 0
   vpc_zone_identifier  = var.public_subnet_ids
@@ -155,13 +157,13 @@ resource "aws_autoscaling_group" "bastion" {
   }
 }
 
-# Scheduled actions: start at 7 AM, stop at 12 PM EST daily
+# Scheduled actions: start at 7 AM, stop at 7 PM EST daily (extended for cozystack conference week)
 resource "aws_autoscaling_schedule" "start" {
   scheduled_action_name  = "${var.name}-start"
   min_size               = 0
   max_size               = 1
   desired_capacity       = 1
-  recurrence             = "0 12 * * *" # 7 AM US/Eastern == 12 UTC
+  recurrence             = "0 12 * * *" # 7 AM EST = 12 UTC
   autoscaling_group_name = aws_autoscaling_group.bastion.name
 }
 
@@ -170,7 +172,7 @@ resource "aws_autoscaling_schedule" "stop" {
   min_size               = 0
   max_size               = 1
   desired_capacity       = 0
-  recurrence             = "0 17 * * *" # 12 PM US/Eastern == 17 UTC
+  recurrence             = "0 0 * * *" # 7 PM EST = 0 UTC next day (midnight UTC)
   autoscaling_group_name = aws_autoscaling_group.bastion.name
 }
 

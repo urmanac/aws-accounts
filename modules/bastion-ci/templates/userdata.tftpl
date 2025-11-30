@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Disable ECS agent (we don't need it on bastion)
+systemctl stop ecs || true
+systemctl disable ecs || true
+docker stop ecs-agent || true
+docker rm ecs-agent || true
+
 # Create SSH authorized_keys for ec2-user
 mkdir -p /home/ec2-user/.ssh
 echo "${my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
@@ -9,14 +15,71 @@ chmod 700 /home/ec2-user/.ssh
 chmod 600 /home/ec2-user/.ssh/authorized_keys
 
 dnf update -y
-dnf install -y git unzip jq iptables wireguard-tools amazon-cloudwatch-agent
+dnf install -y git unzip jq iptables wireguard-tools amazon-cloudwatch-agent docker
 cd /root
+
+# Start Docker service
+systemctl start docker
+systemctl enable docker
+
+# Create registry cache directory and config
+mkdir -p /opt/registry/config
+
+# Create registry configuration file for better error handling
+cat > /opt/registry/config/config.yml << 'EOF'
+version: 0.1
+log:
+  level: info
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+proxy:
+  remoteurl: https://ghcr.io
+  username: ${cozystack_ghcr_username}
+  password: ${cozystack_ghcr_token}
+  ttl: 168h
+EOF
+
+# Start GHCR pull-through registry cache on port 5000 with host networking
+# Host networking required for:
+# 1. Container to inherit WireGuard routing (ghcr.io is IPv4-only)
+# 2. Service to be accessible from public subnet
+docker run -d --name ghcr-cache --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/config:/etc/docker/registry:ro \
+  -v /opt/registry/data:/var/lib/registry \
+  -e REGISTRY_HTTP_TIMEOUT_READ=30s \
+  -e REGISTRY_HTTP_TIMEOUT_WRITE=30s \
+  registry:2
+
+echo "Registry cache started on port 5000 for GHCR pull-through" | logger
+
+# Wait for registry to start and test it
+sleep 10
+if curl -f http://localhost:5000/v2/ > /dev/null 2>&1; then
+  echo "Registry cache is healthy and responding" | logger
+  # Test a simple pull through the cache
+  docker pull localhost:5000/library/hello-world:latest 2>&1 | logger || true
+else
+  echo "Registry cache failed to start properly" | logger
+  docker logs ghcr-cache 2>&1 | logger
+fi
 
 # WireGuard config
 cat >/etc/wireguard/wg0.conf <<EOP
 [Interface]
 Address = 10.66.66.2/32, fd42:42:42::2/128
 PrivateKey = ${my_wireguard_client_key}
+MTU = 1420
 
 [Peer]
 PublicKey = ${my_wireguard_server_pub}
@@ -25,9 +88,27 @@ AllowedIPs = 0.0.0.0/0, 10.66.66.0/24
 PersistentKeepalive = 25
 EOP
 
+# Fix routing BEFORE starting WireGuard
+# The DHCP default route on ens5 has no IPv4 internet (IPv6-only VPC)
+# Delete it first so wg-quick can install WireGuard as the default route
+ip route del default via 10.10.1.1 dev ens5 2>/dev/null || true
+
+# Ensure IMDS route exists (critical for AWS metadata)
+ip route add 169.254.169.254/32 dev ens5 2>/dev/null || true
+
+# Now start WireGuard - it will install itself as the default route
 systemctl enable --now wg-quick@wg0
-# Do not route IMDS traffic over Wireguard!
-ip route add 169.254.169.254/32 dev ens5
+
+# Ensure WireGuard default route is installed (fallback if wg-quick didn't do it)
+sleep 5
+if ! ip route show default | grep -q wg0; then
+  echo "Installing WireGuard default route manually" | logger
+  ip route add default dev wg0
+fi
+
+# Verify routing
+echo "=== Routing table after WireGuard setup ===" | logger
+ip route show | logger
 
 # Install OpenTofu
 curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
