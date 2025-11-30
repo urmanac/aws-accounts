@@ -9,8 +9,26 @@ chmod 700 /home/ec2-user/.ssh
 chmod 600 /home/ec2-user/.ssh/authorized_keys
 
 dnf update -y
-dnf install -y git unzip jq iptables wireguard-tools amazon-cloudwatch-agent
+dnf install -y git unzip jq iptables wireguard-tools amazon-cloudwatch-agent docker
 cd /root
+
+# Start Docker service
+systemctl start docker
+systemctl enable docker
+
+# Create registry cache directory
+mkdir -p /opt/registry
+
+# Start GHCR pull-through registry cache on port 5000
+docker run -d --name ghcr-cache --restart=always \
+  -p 5000:5000 \
+  -e REGISTRY_PROXY_REMOTEURL=https://ghcr.io \
+  -e REGISTRY_PROXY_USERNAME=${cozystack_ghcr_username} \
+  -e REGISTRY_PROXY_PASSWORD=${cozystack_ghcr_token} \
+  -v /opt/registry:/var/lib/registry \
+  registry:2
+
+echo "Registry cache started on port 5000 for GHCR pull-through" | logger
 
 # WireGuard config
 cat >/etc/wireguard/wg0.conf <<EOP

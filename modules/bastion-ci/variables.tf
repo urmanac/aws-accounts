@@ -64,3 +64,16 @@ variable "my_wireguard_server_ipv6" {
   description = "Public IPv6 address for the wireguard server"
   type        = string
 }
+
+variable "cozystack_ghcr_username" {
+  description = "GitHub Container Registry username for cozystack image access"
+  type        = string
+  default     = ""
+}
+
+variable "cozystack_ghcr_token" {
+  description = "GitHub Container Registry token for cozystack image access"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
