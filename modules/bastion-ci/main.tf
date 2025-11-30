@@ -64,10 +64,11 @@ resource "aws_iam_instance_profile" "bastion" {
 
 # Dedicated ENI with fixed IP for bastion
 resource "aws_network_interface" "bastion_eni" {
-  subnet_id         = element(var.public_subnet_ids, 0)
-  private_ips       = ["10.10.1.100"]
-  security_groups   = [var.bastion_security_group_id, var.ssm_security_group_id]
-  source_dest_check = false  # Enable IP forwarding for WireGuard
+  subnet_id           = var.public_subnet_ids[1]  # Use second public subnet (10.10.1.0/24)
+  private_ips         = ["10.10.1.100"]
+  security_groups     = [var.bastion_security_group_id, var.ssm_security_group_id]
+  source_dest_check   = false  # Enable IP forwarding for WireGuard
+  ipv6_address_count  = 1      # IPv6 address for public connectivity
 
   tags = {
     Name = "${var.name}-bastion-eni"
@@ -87,6 +88,28 @@ resource "aws_cloudwatch_log_group" "bastion" {
 resource "aws_iam_role_policy_attachment" "bastion_cwagent" {
   role       = aws_iam_role.bastion_role.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# Policy for ENI attachment/detachment
+resource "aws_iam_role_policy" "eni_management" {
+  name = "${var.name}-eni-management"
+  role = aws_iam_role.bastion_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:AttachNetworkInterface",
+          "ec2:DetachNetworkInterface", 
+          "ec2:DescribeInstances",
+          "ec2:DescribeNetworkInterfaces"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 # Launch template for bastion
@@ -116,11 +139,7 @@ resource "aws_launch_template" "bastion" {
     http_put_response_hop_limit = 2           # standard
   }
 
-  network_interfaces {
-    network_interface_id        = aws_network_interface.bastion_eni.id
-    device_index                = 0
-    delete_on_termination       = false
-  }
+  # Remove network_interfaces block - will be attached via user data
 
   tag_specifications {
     resource_type = "instance"
@@ -138,6 +157,7 @@ resource "aws_launch_template" "bastion" {
     terraform_ci_role_arn     = aws_iam_role.terraform_ci.arn
     cozystack_ghcr_username   = var.cozystack_ghcr_username
     cozystack_ghcr_token      = var.cozystack_ghcr_token
+    bastion_eni_id            = aws_network_interface.bastion_eni.id
   }))
 }
 
@@ -153,8 +173,7 @@ resource "aws_autoscaling_group" "bastion" {
   desired_capacity    = 1
   max_size            = 1
   min_size            = 0
-  vpc_zone_identifier  = var.public_subnet_ids
-
+  vpc_zone_identifier  = [var.public_subnet_ids[1]]  # Use same subnet as ENI
 
   launch_template {
     id      = aws_launch_template.bastion.id

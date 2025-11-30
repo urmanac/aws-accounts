@@ -32,6 +32,17 @@ output "talos_security_group_id" {
 }
 
 output "registry_cache_endpoint" {
-  value       = "${module.bastion_ci.bastion_private_ip}:5000"  # Bastion private IP with registry cache
+  value       = "${module.bastion_ci.bastion_private_ip}:5054"  # GHCR cache endpoint
   description = "Internal registry cache endpoint for GHCR pull-through"
+}
+
+output "registry_cache_endpoints" {
+  value = {
+    docker_io = "${module.bastion_ci.bastion_private_ip}:5050"  # Docker Hub
+    k8s_io    = "${module.bastion_ci.bastion_private_ip}:5051"  # Kubernetes registry  
+    quay_io   = "${module.bastion_ci.bastion_private_ip}:5052"  # Quay.io
+    gcr_io    = "${module.bastion_ci.bastion_private_ip}:5053"  # Google Container Registry
+    ghcr_io   = "${module.bastion_ci.bastion_private_ip}:5054"  # GitHub Container Registry
+  }
+  description = "All registry cache endpoints for container image pulls"
 }

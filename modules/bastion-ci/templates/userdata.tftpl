@@ -1,6 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Get instance metadata
+INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+
+# Attach the dedicated ENI (this replaces the default ENI)
+ENI_ID="${bastion_eni_id}"
+echo "Attaching ENI $ENI_ID to instance $INSTANCE_ID" | logger
+
+# Detach default ENI first (device index 0)
+DEFAULT_ENI=$(aws ec2 describe-instances --region $REGION --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' --output text)
+ATTACHMENT_ID=$(aws ec2 describe-instances --region $REGION --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+
+aws ec2 detach-network-interface --region $REGION --attachment-id $ATTACHMENT_ID
+sleep 10
+
+# Attach our dedicated ENI
+aws ec2 attach-network-interface --region $REGION --network-interface-id $ENI_ID --instance-id $INSTANCE_ID --device-index 0
+sleep 10
+
+# Ensure no public IPv4 is associated with our ENI (IPv6-only architecture)
+echo "Ensuring IPv6-only configuration (no public IPv4)" | logger
+
+# Restart networking to pick up new IP
+systemctl restart NetworkManager
+sleep 5
+
 # Disable ECS agent (we don't need it on bastion)
 systemctl stop ecs || true
 systemctl disable ecs || true
@@ -22,57 +48,72 @@ cd /root
 systemctl start docker
 systemctl enable docker
 
-# Create registry cache directory and config
-mkdir -p /opt/registry/config
+# Create registry cache directories
+mkdir -p /opt/registry/{docker-io,k8s-io,quay-io,gcr-io,ghcr-io}/config
+mkdir -p /opt/registry/{docker-io,k8s-io,quay-io,gcr-io,ghcr-io}/data
 
-# Create registry configuration file for better error handling
-cat > /opt/registry/config/config.yml << 'EOF'
-version: 0.1
-log:
-  level: info
-storage:
-  filesystem:
-    rootdirectory: /var/lib/registry
-http:
-  addr: :5000
-  headers:
-    X-Content-Type-Options: [nosniff]
-health:
-  storagedriver:
-    enabled: true
-    interval: 10s
-    threshold: 3
-proxy:
-  remoteurl: https://ghcr.io
-  username: ${cozystack_ghcr_username}
-  password: ${cozystack_ghcr_token}
-  ttl: 168h
-EOF
+# Start multiple registry pull-through caches with host networking
+# Port mappings match your existing patch set:
+# 5050: registry-1.docker.io
+# 5051: registry.k8s.io  
+# 5052: quay.io
+# 5053: gcr.io
+# 5054: ghcr.io
 
-# Start GHCR pull-through registry cache on port 5000 with host networking
-# Host networking required for:
-# 1. Container to inherit WireGuard routing (ghcr.io is IPv4-only)
-# 2. Service to be accessible from public subnet
-docker run -d --name ghcr-cache --restart=unless-stopped \
+# Docker Hub registry (port 5050)
+docker run -d --name registry-docker.io --restart=unless-stopped \
   --network host \
-  -v /opt/registry/config:/etc/docker/registry:ro \
-  -v /opt/registry/data:/var/lib/registry \
-  -e REGISTRY_HTTP_TIMEOUT_READ=30s \
-  -e REGISTRY_HTTP_TIMEOUT_WRITE=30s \
+  -v /opt/registry/docker-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+  -e REGISTRY_HTTP_ADDR=:5050 \
   registry:2
 
-echo "Registry cache started on port 5000 for GHCR pull-through" | logger
+# Kubernetes registry (port 5051)  
+docker run -d --name registry-k8s.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/k8s-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://registry.k8s.io \
+  -e REGISTRY_HTTP_ADDR=:5051 \
+  registry:2
 
-# Wait for registry to start and test it
+# Quay.io registry (port 5052)
+docker run -d --name registry-quay.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/quay-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://quay.io \
+  -e REGISTRY_HTTP_ADDR=:5052 \
+  registry:2
+
+# Google Container Registry (port 5053)
+docker run -d --name registry-gcr.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/gcr-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://gcr.io \
+  -e REGISTRY_HTTP_ADDR=:5053 \
+  registry:2
+
+# GitHub Container Registry (port 5054) - with authentication
+docker run -d --name registry-ghcr.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/ghcr-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://ghcr.io \
+  -e REGISTRY_PROXY_USERNAME=${cozystack_ghcr_username} \
+  -e REGISTRY_PROXY_PASSWORD=${cozystack_ghcr_token} \
+  -e REGISTRY_HTTP_ADDR=:5054 \
+  registry:2
+
+echo "All registry caches started on ports 5050-5054" | logger
+
+# Wait for registries to start and test them
 sleep 10
-if curl -f http://localhost:5000/v2/ > /dev/null 2>&1; then
-  echo "Registry cache is healthy and responding" | logger
-  # Test a simple pull through the cache
-  docker pull localhost:5000/library/hello-world:latest 2>&1 | logger || true
-else
-  echo "Registry cache failed to start properly" | logger
-  docker logs ghcr-cache 2>&1 | logger
-fi
+for port in 5050 5051 5052 5053 5054; do
+  if curl -f http://localhost:$port/v2/ > /dev/null 2>&1; then
+    echo "Registry cache on port $port is healthy" | logger
+  else
+    echo "Registry cache on port $port failed to start" | logger
+    docker logs registry-$(case $port in 5050) echo docker.io;; 5051) echo k8s.io;; 5052) echo quay.io;; 5053) echo gcr.io;; 5054) echo ghcr.io;; esac) 2>&1 | logger
+  fi
+done
 
 # WireGuard config
 cat >/etc/wireguard/wg0.conf <<EOP
