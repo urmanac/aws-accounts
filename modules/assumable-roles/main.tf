@@ -250,9 +250,9 @@ resource "aws_iam_role" "admin" {
   max_session_duration = var.admin_session_duration
 
   tags = {
-    Name        = "${var.role_prefix}Admin"
+    Name        = "${var.environment}-Admin"
     Environment = var.environment
-    Purpose     = "Full administrative access (emergency use only)"
+    Purpose     = "Full administrative access emergency use only"
     RoleType    = "Human"
   }
 }

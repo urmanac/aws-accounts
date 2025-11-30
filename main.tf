@@ -69,9 +69,9 @@ module "bastion_ci" {
   my_wireguard_client_pub   = local.env["MY_WIREGUARD_CLIENT_PUB"]
   my_wireguard_server_pub   = local.env["MY_WIREGUARD_SERVER_PUB"]
   my_wireguard_server_ipv6  = local.env["MY_WIREGUARD_SERVER_IPV6"]
-  # GHCR credentials for cozystack registry cache
-  cozystack_ghcr_username   = local.env["GHCR_USERNAME"]
-  cozystack_ghcr_token      = local.env["GHCR_TOKEN"]
+  # GHCR credentials for cozystack registry cache (optional)
+  cozystack_ghcr_username   = lookup(local.env, "GHCR_USERNAME", "")
+  cozystack_ghcr_token      = lookup(local.env, "GHCR_TOKEN", "")
 }
 
 module "vpc_eu_west_1" {
