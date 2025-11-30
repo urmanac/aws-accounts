@@ -65,7 +65,7 @@ resource "aws_iam_instance_profile" "bastion" {
 # Dedicated ENI with fixed IP for bastion
 resource "aws_network_interface" "bastion_eni" {
   subnet_id           = var.public_subnet_ids[1]  # Use second public subnet (10.10.1.0/24)
-  private_ips         = ["10.10.1.100"]
+  private_ips         = ["10.10.1.100"]  # Back to original fixed IP
   security_groups     = [var.bastion_security_group_id, var.ssm_security_group_id]
   source_dest_check   = false  # Enable IP forwarding for WireGuard
   ipv6_address_count  = 1      # IPv6 address for public connectivity
