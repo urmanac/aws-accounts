@@ -219,14 +219,16 @@ resource "aws_security_group" "talos_cluster" {
 }
 
 # Security group for bastion hosts (only created if bastion networking is enabled)
+# Note: ingress rules are managed externally via update_ssh_access.sh
 resource "aws_security_group" "bastion" {
   count       = var.enable_bastion_networking ? 1 : 0
   name        = "${var.name}-bastion-sg"
   description = "Security group for bastion hosts"
   vpc_id      = aws_vpc.this.id
 
+  # Initial ingress rule - will be replaced by update_ssh_access.sh
   ingress {
-    description = "SSH from anywhere"
+    description = "SSH from anywhere (managed externally)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -240,6 +242,11 @@ resource "aws_security_group" "bastion" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
+  }
+
+  # Ignore changes to ingress rules - managed by update_ssh_access.sh
+  lifecycle {
+    ignore_changes = [ingress]
   }
 
   tags = {

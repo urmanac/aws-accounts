@@ -163,7 +163,7 @@ resource "aws_autoscaling_schedule" "start" {
   min_size               = 0
   max_size               = 1
   desired_capacity       = 1
-  recurrence             = "0 12 * * *" # 7 AM US/Eastern == 12 UTC
+  recurrence             = "0 12 * * *" # 7 AM EST = 12 UTC
   autoscaling_group_name = aws_autoscaling_group.bastion.name
 }
 
@@ -172,7 +172,7 @@ resource "aws_autoscaling_schedule" "stop" {
   min_size               = 0
   max_size               = 1
   desired_capacity       = 0
-  recurrence             = "0 23 * * *" # 7 PM US/Eastern == 23 UTC (was wrong before)
+  recurrence             = "0 0 * * *" # 7 PM EST = 0 UTC next day (midnight UTC)
   autoscaling_group_name = aws_autoscaling_group.bastion.name
 }
 

@@ -22,19 +22,57 @@ cd /root
 systemctl start docker
 systemctl enable docker
 
-# Create registry cache directory
-mkdir -p /opt/registry
+# Create registry cache directory and config
+mkdir -p /opt/registry/config
 
-# Start GHCR pull-through registry cache on port 5000
-docker run -d --name ghcr-cache --restart=always \
-  -p 5000:5000 \
-  -e REGISTRY_PROXY_REMOTEURL=https://ghcr.io \
-  -e REGISTRY_PROXY_USERNAME=${cozystack_ghcr_username} \
-  -e REGISTRY_PROXY_PASSWORD=${cozystack_ghcr_token} \
-  -v /opt/registry:/var/lib/registry \
+# Create registry configuration file for better error handling
+cat > /opt/registry/config/config.yml << 'EOF'
+version: 0.1
+log:
+  level: info
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+proxy:
+  remoteurl: https://ghcr.io
+  username: ${cozystack_ghcr_username}
+  password: ${cozystack_ghcr_token}
+  ttl: 168h
+EOF
+
+# Start GHCR pull-through registry cache on port 5000 with host networking
+# Host networking required for:
+# 1. Container to inherit WireGuard routing (ghcr.io is IPv4-only)
+# 2. Service to be accessible from public subnet
+docker run -d --name ghcr-cache --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/config:/etc/docker/registry:ro \
+  -v /opt/registry/data:/var/lib/registry \
+  -e REGISTRY_HTTP_TIMEOUT_READ=30s \
+  -e REGISTRY_HTTP_TIMEOUT_WRITE=30s \
   registry:2
 
 echo "Registry cache started on port 5000 for GHCR pull-through" | logger
+
+# Wait for registry to start and test it
+sleep 10
+if curl -f http://localhost:5000/v2/ > /dev/null 2>&1; then
+  echo "Registry cache is healthy and responding" | logger
+  # Test a simple pull through the cache
+  docker pull localhost:5000/library/hello-world:latest 2>&1 | logger || true
+else
+  echo "Registry cache failed to start properly" | logger
+  docker logs ghcr-cache 2>&1 | logger
+fi
 
 # WireGuard config
 cat >/etc/wireguard/wg0.conf <<EOP
@@ -49,9 +87,20 @@ AllowedIPs = 0.0.0.0/0, 10.66.66.0/24
 PersistentKeepalive = 25
 EOP
 
+# Fix routing BEFORE starting WireGuard
+# The DHCP default route on ens5 has no IPv4 internet (IPv6-only VPC)
+# Delete it first so wg-quick can install WireGuard as the default route
+ip route del default via 10.10.1.1 dev ens5 2>/dev/null || true
+
+# Ensure IMDS route exists (critical for AWS metadata)
+ip route add 169.254.169.254/32 dev ens5 2>/dev/null || true
+
+# Now start WireGuard - it will install itself as the default route
 systemctl enable --now wg-quick@wg0
-# Do not route IMDS traffic over Wireguard!
-ip route add 169.254.169.254/32 dev ens5
+
+# Verify routing
+echo "=== Routing table after WireGuard setup ===" | logger
+ip route show | logger
 
 # Install OpenTofu
 curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
