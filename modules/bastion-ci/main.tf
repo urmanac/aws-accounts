@@ -143,11 +143,42 @@ resource "aws_launch_template" "bastion" {
   }))
 }
 
-# Direct EC2 instance using launch template (for proper network configuration)
+# Direct EC2 instance (no ASG needed for single fixed instance)
 resource "aws_instance" "bastion" {
-  launch_template {
-    id      = aws_launch_template.bastion.id
-    version = "$Latest"
+  ami                     = data.aws_ami.amazon_linux.id
+  instance_type           = var.instance_type
+  iam_instance_profile    = aws_iam_instance_profile.bastion.name
+  user_data              = base64encode(templatefile("${path.module}/templates/userdata.tftpl", {
+    my_public_ssh_key         = var.my_public_ssh_key
+    my_wireguard_client_key   = var.my_wireguard_client_key
+    my_wireguard_client_pub   = var.my_wireguard_client_pub
+    my_wireguard_server_pub   = var.my_wireguard_server_pub
+    my_wireguard_server_ipv6  = var.my_wireguard_server_ipv6
+    region                    = var.region
+    terraform_ci_role_arn     = aws_iam_role.terraform_ci.arn
+    cozystack_ghcr_username   = var.cozystack_ghcr_username
+    cozystack_ghcr_token      = var.cozystack_ghcr_token
+  }))
+  user_data_replace_on_change = true
+
+  network_interface {
+    network_interface_id  = aws_network_interface.bastion_eni.id
+    device_index          = 0
+    delete_on_termination = false
+  }
+
+  root_block_device {
+    volume_size           = 32
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = true
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_protocol_ipv6          = "enabled"
+    http_put_response_hop_limit = 2
   }
 
   tags = {
