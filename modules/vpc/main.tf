@@ -277,9 +277,19 @@ resource "aws_security_group" "bastion" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
-  # ICMP for connectivity testing from VPC
+  # 🚨🚨🚨 MANUALLY APPLIED RULE - NOT MANAGED BY TERRAFORM 🚨🚨🚨
+  # The ICMP rule below was added manually via AWS CLI because the lifecycle
+  # block (ignore_changes = [ingress]) prevents Terraform from managing
+  # ingress rules. SSH rules are managed by update_ssh_access.sh script.
+  # 
+  # Manual command used:
+  # aws ec2 authorize-security-group-ingress --group-id sg-0f9cb1bf403ae7dd1 \
+  #   --protocol icmp --port -1 --cidr 10.10.0.0/16 --region eu-west-1
+  #
+  # This rule allows ICMP (ping) from VPC CIDR for connectivity testing
+  # between Talos nodes and bastion host.
   ingress {
-    description = "ICMP (ping/connectivity testing)"
+    description = "ICMP (ping/connectivity testing) - APPLIED MANUALLY"
     from_port   = -1
     to_port     = -1
     protocol    = "icmp"
