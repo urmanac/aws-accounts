@@ -99,31 +99,37 @@ MTU = 1420
 [Peer]
 PublicKey = ${my_wireguard_server_pub}
 Endpoint = [${my_wireguard_server_ipv6}]:51820
-AllowedIPs = 0.0.0.0/0, 10.66.66.0/24
+AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 10.66.66.0/24
 PersistentKeepalive = 25
 EOP
 
 # Fix routing BEFORE starting WireGuard
 # The DHCP default route on ens5 has no IPv4 internet (IPv6-only VPC)
-# Delete it first so wg-quick can install WireGuard as the default route
-ip route del default via 10.10.1.1 dev ens5 2>/dev/null || true
+# But we need to keep local VPC routes on ens5
 
-# Ensure IMDS route exists (critical for AWS metadata)
-ip route add 169.254.169.254/32 dev ens5 2>/dev/null || true
+# Get the local interface name and VPC CIDR
+LOCAL_IFACE=$(ip route | grep '^10\.10\.' | head -1 | awk '{print $3}')
+VPC_CIDR="10.10.0.0/16"
 
-# Now start WireGuard - it will install itself as the default route
+echo "Local interface: $LOCAL_IFACE, VPC CIDR: $VPC_CIDR" | logger
+
+# Delete the default route that goes nowhere (IPv6-only VPC)
+# ip route del default via 10.10.1.1 dev $LOCAL_IFACE 2>/dev/null || true
+
+# Ensure critical routes stay on local interface
+ip route add 169.254.169.254/32 dev $LOCAL_IFACE 2>/dev/null || true  # IMDS
+ip route add $VPC_CIDR dev $LOCAL_IFACE metric 100 2>/dev/null || true  # VPC internal traffic
+
+# Now start WireGuard - it will install itself as default for external traffic
 systemctl enable --now wg-quick@wg0
 
-# Ensure WireGuard default route is installed (fallback if wg-quick didn't do it)
+# Verify that local VPC traffic stays local
 sleep 5
-if ! ip route show default | grep -q wg0; then
-  echo "Installing WireGuard default route manually" | logger
-  ip route add default dev wg0
-fi
-
-# Verify routing
-echo "=== Routing table after WireGuard setup ===" | logger
+echo "=== Final routing table ===" | logger
 ip route show | logger
+
+# Test local connectivity
+ping -c1 -W2 10.10.1.1 >/dev/null 2>&1 && echo "Local VPC gateway reachable" | logger || echo "WARNING: Local VPC gateway not reachable" | logger
 
 # Install OpenTofu
 curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh

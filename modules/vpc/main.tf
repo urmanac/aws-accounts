@@ -194,11 +194,43 @@ resource "aws_security_group" "talos_cluster" {
     self        = true
   }
 
-  # Registry cache access from cluster nodes
+  # Registry cache access from cluster nodes (ports 5050-5054)
   ingress {
-    description = "Registry cache"
-    from_port   = 5000
-    to_port     = 5000
+    description = "Registry cache (docker.io)"
+    from_port   = 5050
+    to_port     = 5050
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (registry.k8s.io)"
+    from_port   = 5051
+    to_port     = 5051
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (quay.io)"
+    from_port   = 5052
+    to_port     = 5052
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (gcr.io)"
+    from_port   = 5053
+    to_port     = 5053
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (ghcr.io)"
+    from_port   = 5054
+    to_port     = 5054
     protocol    = "tcp"
     cidr_blocks = [aws_vpc.this.cidr_block]
   }
