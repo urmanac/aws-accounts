@@ -277,22 +277,71 @@ resource "aws_security_group" "bastion" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
-  # 🚨🚨🚨 MANUALLY APPLIED RULE - NOT MANAGED BY TERRAFORM 🚨🚨🚨
-  # The ICMP rule below was added manually via AWS CLI because the lifecycle
+  # 🚨🚨🚨 MANUALLY APPLIED RULES - NOT MANAGED BY TERRAFORM 🚨🚨🚨
+  # The rules below were added manually via AWS CLI because the lifecycle
   # block (ignore_changes = [ingress]) prevents Terraform from managing
   # ingress rules. SSH rules are managed by update_ssh_access.sh script.
   # 
-  # Manual command used:
+  # Manual commands used:
+  # 
+  # ICMP rule:
   # aws ec2 authorize-security-group-ingress --group-id sg-0f9cb1bf403ae7dd1 \
   #   --protocol icmp --port -1 --cidr 10.10.0.0/16 --region eu-west-1
   #
-  # This rule allows ICMP (ping) from VPC CIDR for connectivity testing
-  # between Talos nodes and bastion host.
+  # Registry cache ports (5050-5054):
+  # for port in 5050 5051 5052 5053 5054; do
+  #   aws ec2 authorize-security-group-ingress --group-id sg-0f9cb1bf403ae7dd1 \
+  #     --protocol tcp --port $port --cidr 10.10.0.0/16 --region eu-west-1
+  # done
+  #
+  # These rules allow:
+  # - ICMP (ping) from VPC CIDR for connectivity testing
+  # - Registry cache access from Talos nodes to bastion host (ports 5050-5054)
   ingress {
     description = "ICMP (ping/connectivity testing) - APPLIED MANUALLY"
     from_port   = -1
     to_port     = -1
     protocol    = "icmp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (docker.io) - APPLIED MANUALLY"
+    from_port   = 5050
+    to_port     = 5050
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (registry.k8s.io) - APPLIED MANUALLY"
+    from_port   = 5051
+    to_port     = 5051
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (quay.io) - APPLIED MANUALLY"
+    from_port   = 5052
+    to_port     = 5052
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (gcr.io) - APPLIED MANUALLY"
+    from_port   = 5053
+    to_port     = 5053
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (ghcr.io) - APPLIED MANUALLY"
+    from_port   = 5054
+    to_port     = 5054
+    protocol    = "tcp"
     cidr_blocks = [aws_vpc.this.cidr_block]
   }
 
