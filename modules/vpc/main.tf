@@ -194,6 +194,16 @@ resource "aws_security_group" "talos_cluster" {
     self        = true
   }
 
+  # SSH access for initial setup (boot-to-talos)
+  ingress {
+    description = "SSH for initial Talos setup"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
   # Registry cache access from cluster nodes (ports 5050-5054)
   ingress {
     description = "Registry cache (docker.io)"
