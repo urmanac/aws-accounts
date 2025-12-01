@@ -235,6 +235,15 @@ resource "aws_security_group" "talos_cluster" {
     cidr_blocks = [aws_vpc.this.cidr_block]
   }
 
+  # ICMP for connectivity testing (ping)
+  ingress {
+    description = "ICMP (ping/connectivity testing)"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
   # All outbound traffic
   egress {
     from_port   = 0
