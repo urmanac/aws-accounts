@@ -277,6 +277,15 @@ resource "aws_security_group" "bastion" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
+  # ICMP for connectivity testing from VPC
+  ingress {
+    description = "ICMP (ping/connectivity testing)"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
