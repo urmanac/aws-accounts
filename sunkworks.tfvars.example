@@ -1,0 +1,52 @@
+# =============================================================================
+# Sunkworks Configuration Example
+# =============================================================================
+# Copy this file to sunkworks.tfvars and customize for your environment
+# =============================================================================
+
+# Required: Your email domain for creating episode account emails
+# Episode accounts will be created as: sunkworks-pihole@example.com, etc.
+sunkworks_email_domain = "example.com"
+
+# Required: Your management/root account ID where organization is created
+sunkworks_management_account_id = "123456789012"
+
+# Optional: Discord webhook for stream notifications
+# Get this from Discord: Server Settings → Integrations → Webhooks
+sunkworks_discord_webhook = ""
+
+# Optional: Slack webhook for stream notifications
+# Get this from Slack: Apps → Incoming Webhooks
+sunkworks_slack_webhook = ""
+
+# Email addresses for budget alerts
+sunkworks_budget_emails = [
+  "your-email@example.com"
+]
+
+# Home lab IP ranges for SSO device trust
+# These IPs get reduced MFA friction
+sunkworks_home_lab_cidrs = [
+  "10.17.12.0/24",
+  "10.17.13.0/24"
+]
+
+# AWS regions allowed for Sunkworks resources
+# Resources in other regions will be blocked by SCPs
+sunkworks_approved_regions = [
+  "us-east-1",
+  "eu-west-1"
+]
+
+# -----------------------------------------------------------------------------
+# Episode Accounts - Enable as needed for each stream
+# -----------------------------------------------------------------------------
+
+# Pi-hole DNS experiments
+sunkworks_enable_pihole = false
+
+# Vind Kubernetes testing (disposable t4g instances)
+sunkworks_enable_vind = false
+
+# Turing ARM64 hardware emulation
+sunkworks_enable_turing = false
