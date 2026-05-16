@@ -244,10 +244,10 @@ resource "aws_instance" "bastion" {
 # Find Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["137112412989"]
   filter {
     name   = "name"
-    values = ["al2023-ami-*-kernel-6.1-arm64"]
+    values = ["al2023-ami-20*-kernel-6.1-arm64"]
   }
   filter {
     name   = "architecture"
