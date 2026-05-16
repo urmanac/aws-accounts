@@ -4,6 +4,10 @@ So you've run `make apply-sb`, the bastion is at `10.10.1.100`, IPv4 egress is
 working through WireGuard, and the registry caches are serving on ports 5050–5054.
 Here's how to bring up Talos nodes and run CozyStack on top.
 
+> **For the actual hands-on cookbook from the latest session (2026-05-16),
+> open problems, and gotchas, see [RUNBOOK.md](RUNBOOK.md).** This README
+> covers the architecture; the runbook covers what worked when we ran it.
+
 ---
 
 ## Why private IPv4?
@@ -52,8 +56,12 @@ booting the upstream AMI without any user-data drops it directly into Talos
 maintenance mode, where `talosctl` can reach and configure it.
 
 ```bash
-# Official Talos v1.11.5 ARM64 AMI (eu-west-1)
-TALOS_AMI="ami-07898be81f2028262"
+# Official Talos v1.12.7 ARM64 AMI (eu-west-1, released 2026-04-24)
+# Look up the latest with:
+#   aws ec2 describe-images --region eu-west-1 \
+#     --filters 'Name=name,Values=talos-v1.12*-arm64' 'Name=state,Values=available' \
+#     --query 'sort_by(Images, &CreationDate)[-1].[Name,ImageId]' --output text
+TALOS_AMI="ami-004622e65b38b994c"
 REGION="eu-west-1"
 SECURITY_GROUP="sg-0e6b4a78092854897"
 SUBNET_ID="subnet-07a140ab2b20bf89b"
@@ -100,7 +108,12 @@ ssh ec2-user@<bastion-ipv6>
 curl -sL https://github.com/siderolabs/talos/releases/download/v1.11.5/talosctl-linux-arm64 \
   -o talosctl && chmod +x talosctl && sudo mv talosctl /usr/local/bin/
 
-# Write the patch for AWS NTP and registry mirrors
+# Write the patch for AWS NTP and registry mirrors.
+# IMPORTANT: do NOT include a `config:` block with insecureSkipVerify for
+# the http:// mirrors -- Talos rejects TLS config on non-HTTPS registries
+# with: `TLS config specified for non-HTTPS registry`. The mirror entry
+# alone is sufficient for plain HTTP pull-through caches.
+# Full multi-mirror patch lives at ./registry-patch.yaml in this directory.
 cat > time-server-patch.yaml << 'EOF'
 machine:
   time:
@@ -108,19 +121,21 @@ machine:
       - 169.254.169.123
   registries:
     mirrors:
-      ghcr.io:
-        endpoints:
-          - http://10.10.1.100:5054
       docker.io:
         endpoints:
           - http://10.10.1.100:5050
-    config:
-      10.10.1.100:5054:
-        tls:
-          insecureSkipVerify: true
-      10.10.1.100:5050:
-        tls:
-          insecureSkipVerify: true
+      registry.k8s.io:
+        endpoints:
+          - http://10.10.1.100:5051
+      quay.io:
+        endpoints:
+          - http://10.10.1.100:5052
+      gcr.io:
+        endpoints:
+          - http://10.10.1.100:5053
+      ghcr.io:
+        endpoints:
+          - http://10.10.1.100:5054
 EOF
 
 # Generate config — use the gateway node's known IPv4 as the cluster endpoint
@@ -208,9 +223,9 @@ to bring a fresh cluster up.
 
 ---
 
-## What was proven to work (2025-11-30)
+## What was proven to work
 
-Validated on a single-node cluster (`c7g.large`, `10.10.1.119`, `eu-west-1`):
+### 2025-11-30 — single-node baseline (`c7g.large`, `10.10.1.119`)
 
 - ✅ Official Talos AMI boots to maintenance mode with no user-data
 - ✅ `talosctl apply-config` + `talosctl bootstrap` from bastion
@@ -219,8 +234,17 @@ Validated on a single-node cluster (`c7g.large`, `10.10.1.119`, `eu-west-1`):
 - ✅ Spin WASM workloads run on ARM64 Graviton
 - ✅ Kubernetes v1.34.1 on Talos v1.11.5 (ARM64)
 
-The full 3-node cluster with CozyStack operator, Harvey tenant cluster, and
-Crossplane was the next step — reached for the December 2025 CozySummit demo.
+### 2026-05-16 — three-node cluster `cozyaws` with talm
+
+- ✅ 3 × `c7g.large` on Talos v1.12.7 ARM64 (`ami-004622e65b38b994c`)
+- ✅ talm-based config rendering (helm templater) bootstrapped cluster
+- ✅ All 3 nodes reached Running, kube-apiserver/scheduler/controller-manager up
+- ✅ `cozystack-operator` v1.3.3 installed via helm, pod Running
+- ✅ Flux pods (`flux`, `flux-tenants`) scheduling in `cozy-fluxcd`
+- ❌ `cozystack-platform` Package stuck — OCIRepository can't reach ghcr.io
+  from inside the cluster (pods have no IPv4 egress, mirror config only
+  affects containerd image pulls, not in-pod HTTPS clients)
+- See [RUNBOOK.md](RUNBOOK.md) for full gotchas and next-attempt plan
 
 The images are currently built against **CozyStack v1.3.3** (as of May 2026).
 See [urmanac/cozystack-moon-and-back](https://github.com/urmanac/cozystack-moon-and-back)
