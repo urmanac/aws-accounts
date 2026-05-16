@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Disable ECS agent (we don't need it on bastion)
+systemctl stop ecs || true
+systemctl disable ecs || true
+docker stop ecs-agent || true
+docker rm ecs-agent || true
+
+# Create SSH authorized_keys for ec2-user
+mkdir -p /home/ec2-user/.ssh
+echo "${my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
+chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+chmod 700 /home/ec2-user/.ssh
+chmod 600 /home/ec2-user/.ssh/authorized_keys
+
+dnf update -y
+dnf install -y git unzip jq iptables wireguard-tools amazon-cloudwatch-agent docker
+cd /root
+
+# Start Docker service
+systemctl start docker
+systemctl enable docker
+
+# Create registry cache directories
+mkdir -p /opt/registry/{docker-io,k8s-io,quay-io,gcr-io,ghcr-io}/config
+mkdir -p /opt/registry/{docker-io,k8s-io,quay-io,gcr-io,ghcr-io}/data
+
+# Start multiple registry pull-through caches with host networking
+# Port mappings match your existing patch set:
+# 5050: registry-1.docker.io
+# 5051: registry.k8s.io  
+# 5052: quay.io
+# 5053: gcr.io
+# 5054: ghcr.io
+
+# Docker Hub registry (port 5050)
+docker run -d --name registry-docker.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/docker-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+  -e REGISTRY_HTTP_ADDR=:5050 \
+  registry:2
+
+# Kubernetes registry (port 5051)  
+docker run -d --name registry-k8s.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/k8s-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://registry.k8s.io \
+  -e REGISTRY_HTTP_ADDR=:5051 \
+  registry:2
+
+# Quay.io registry (port 5052)
+docker run -d --name registry-quay.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/quay-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://quay.io \
+  -e REGISTRY_HTTP_ADDR=:5052 \
+  registry:2
+
+# Google Container Registry (port 5053)
+docker run -d --name registry-gcr.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/gcr-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://gcr.io \
+  -e REGISTRY_HTTP_ADDR=:5053 \
+  registry:2
+
+# GitHub Container Registry (port 5054) - with authentication
+docker run -d --name registry-ghcr.io --restart=unless-stopped \
+  --network host \
+  -v /opt/registry/ghcr-io/data:/var/lib/registry \
+  -e REGISTRY_PROXY_REMOTEURL=https://ghcr.io \
+  -e REGISTRY_PROXY_USERNAME=${cozystack_ghcr_username} \
+  -e REGISTRY_PROXY_PASSWORD=${cozystack_ghcr_token} \
+  -e REGISTRY_HTTP_ADDR=:5054 \
+  registry:2
+
+echo "All registry caches started on ports 5050-5054" | logger
+
+# Wait for registries to start and test them
+sleep 10
+for port in 5050 5051 5052 5053 5054; do
+  if curl -f http://localhost:$port/v2/ > /dev/null 2>&1; then
+    echo "Registry cache on port $port is healthy" | logger
+  else
+    echo "Registry cache on port $port failed to start" | logger
+    docker logs registry-$(case $port in 5050) echo docker.io;; 5051) echo k8s.io;; 5052) echo quay.io;; 5053) echo gcr.io;; 5054) echo ghcr.io;; esac) 2>&1 | logger
+  fi
+done
+
+# WireGuard config
+cat >/etc/wireguard/wg0.conf <<EOP
+[Interface]
+Address = 10.66.66.2/32, fd42:42:42::2/128
+PrivateKey = ${my_wireguard_client_key}
+MTU = 1420
+
+[Peer]
+PublicKey = ${my_wireguard_server_pub}
+Endpoint = [${my_wireguard_server_ipv6}]:51820
+AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, 10.66.66.0/24
+PersistentKeepalive = 25
+EOP
+
+# Fix routing BEFORE starting WireGuard
+# The DHCP default route on ens5 has no IPv4 internet (IPv6-only VPC)
+# But we need to keep local VPC routes on ens5
+
+# Get the local interface name and VPC CIDR
+LOCAL_IFACE=$(ip route | grep '^10\.10\.' | head -1 | awk '{print $3}')
+VPC_CIDR="10.10.0.0/16"
+
+echo "Local interface: $LOCAL_IFACE, VPC CIDR: $VPC_CIDR" | logger
+
+# Delete the default route that goes nowhere (IPv6-only VPC)
+# ip route del default via 10.10.1.1 dev $LOCAL_IFACE 2>/dev/null || true
+
+# Ensure critical routes stay on local interface
+ip route add 169.254.169.254/32 dev $LOCAL_IFACE 2>/dev/null || true  # IMDS
+ip route add $VPC_CIDR dev $LOCAL_IFACE metric 100 2>/dev/null || true  # VPC internal traffic
+
+# Now start WireGuard - it will install itself as default for external traffic
+systemctl enable --now wg-quick@wg0
+
+# Verify that local VPC traffic stays local
+sleep 5
+echo "=== Final routing table ===" | logger
+ip route show | logger
+
+# Test local connectivity
+ping -c1 -W2 10.10.1.1 >/dev/null 2>&1 && echo "Local VPC gateway reachable" | logger || echo "WARNING: Local VPC gateway not reachable" | logger
+
+# Install OpenTofu
+curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+chmod +x install-opentofu.sh
+./install-opentofu.sh --install-method rpm
+rm -f install-opentofu.sh
+
+# Enable CloudWatch
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOP'
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "metrics": {
+    "append_dimensions": {
+      "InstanceId": "$${aws:InstanceId}"
+    },
+    "metrics_collected": {
+      "mem": { "measurement": ["mem_used_percent"] },
+      "cpu": { "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"], "metrics_collection_interval": 60 },
+      "disk": { "measurement": ["used_percent"], "resources": ["*"] },
+      "net": { "measurement": ["bytes_sent", "bytes_recv", "packets_sent", "packets_recv"], "resources": ["*"] }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          { "file_path": "/var/log/cloud-init-output.log", "log_group_name": "/bastion/logs", "log_stream_name": "{instance_id}" }
+        ]
+      }
+    }
+  }
+}
+EOP
+
+systemctl enable amazon-cloudwatch-agent
+systemctl start amazon-cloudwatch-agent
+
+# Assume role helper
+cat >/etc/profile.d/assume-tf-ci.sh <<'EOP'
+export AWS_REGION=${region}
+export AWS_PAGER=""
+assume_tf_ci() {
+  CREDS=$(aws sts assume-role --role-arn ${terraform_ci_role_arn} --role-session-name tfci-$$)
+  export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId)
+  export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey)
+  export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken)
+  echo "Assumed ${terraform_ci_role_arn}"
+}
+EOP
+
+systemctl enable amazon-ssm-agent
+systemctl start amazon-ssm-agent
+echo "Bootstrap complete" | logger

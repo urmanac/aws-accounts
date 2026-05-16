@@ -1,0 +1,138 @@
+ping ghcr.io
+tofu
+ping ghcr.io
+ls
+talosctl
+talosctl get disks
+talosctl get disks -n 10.10.1.102 --insecure
+talosctl get disks -n 10.10.1.101 --insecure
+ping 10.10.1.101
+ping 10.10.1.102
+ping 10.10.1.103
+talosctl get disks -n 10.10.1.101 --insecure
+talm
+brew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+sudo passwd ec2-user
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install talm
+    echo >> /home/ec2-user/.bashrc
+    echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"' >> /home/ec2-user/.bashrc
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"
+brew install talm
+mkdir cozystack-cluster
+cd cozystack-cluster
+talm init --preset cozystack --name cozyaws
+ls
+vi values.yaml 
+vi template.sh
+chmod +x template
+chmod +x template.sh 
+./template.sh 
+vi nodes/*
+ls
+talm apply -f nodes/node1.yaml 
+talm apply -f nodes/node1.yaml -i
+talm apply -f nodes/node2.yaml -i
+talm apply -f nodes/node3.yaml -i
+ls ~/.talos
+vi ~/.talos/config 
+cp talosconfig ~/.talos/config
+talm bootstrap -f nodes/node1.yaml 
+talm kubeconfig -f nodes/node1.yaml
+ls ~/.kube/config
+mkdir ~/.kube
+cp kubeconfig ~/.kube/config
+k
+alias k=kubectl
+k get no
+brew install kubernetes-cli
+k get no
+talm dashboard -f nodes/node1.yaml -f nodes/node2.yaml -f nodes/node3.yaml 
+talm dashboard -f nodes/node1.yaml 
+talm dashboard -f nodes/node1.yaml -f nodes/node2.yaml -f nodes/node3.yaml 
+talm dashboard -f nodes/node1.yaml 
+ls
+vi Makefile
+rm -r Chart.yaml charts/ nodes/ templates/
+git init
+gc --allow-empty -m'initial empty commit'
+git commit --allow-empty -m'initial empty commit'
+gs
+alias gc='git commit'
+alias gs='git status'
+gs
+vi Makefile 
+git add values.yaml .gitignore 
+vi .gitignore 
+gs
+gc
+gap
+gs
+git add template.sh Makefile 
+git add .gitignore 
+gc
+ls
+rm kubeconfig secrets.encrypted.yaml secrets.yaml talm.key talosconfig talosconfig.encrypted 
+vi Makefile 
+gs
+ls
+rm values.yaml 
+vi Makefile 
+make gen
+sudo yum install make
+make gen
+ls
+git status
+git diff values.yaml
+git stash push -- values.yaml
+gs
+ga Chart.yaml charts/ templates Makefile 
+gs
+alias ga='git add'
+ga Chart.yaml charts/ templates Makefile 
+make gen
+make clean
+ls
+rm values.yaml 
+make gen
+git stash push -- values.yaml
+gd
+gs
+gc
+./template.sh
+vi nodes/node*.yaml
+ls ~
+vi ~/registry-patch.yaml 
+vi nodes/*.yaml
+gs
+talm apply -f nodes/node1.yaml -i
+talm apply -f nodes/node2.yaml -i
+vi nodes/node2.yaml nodes/node3.yaml 
+talm apply -f nodes/node2.yaml -i
+talm apply -f nodes/node3.yaml -i
+talm bootstrap -f nodes/node1.yaml 
+talm dashboard -f nodes/node1.yaml 
+vi nodes/node1.yaml 
+vi nodes/node2.yaml nodes/node3.yaml 
+talm apply -f nodes/node1.yaml 
+talm dashboard -f nodes/node1.yaml 
+talm apply -f nodes/node2.yaml
+talm apply -f nodes/node3.yaml
+talm dashboard -f nodes/node1.yaml -f nodes/node2.yaml -f nodes/node3.yaml 
+vi nodes/node*.yaml
+talm dashboard -f nodes/node2.yaml 
+talm dashboard -f nodes/node3.yaml 
+vi nodes/node{2,3}.yaml
+talm dashboard -f nodes/node1.yaml -f nodes/node2.yaml -f nodes/node3.yaml 
+talm kubeconfig -f nodes/node1.yaml
+cp kubeconfig ~/.kube/config
+kg po
+alias k=kubectl
+alias kg='kubectl get -A'
+kg po
+kg no
+helm upgrade --install cozystack oci://ghcr.io/cozystack/cozystack/cozy-installer   --version 1.3.3   --namespace cozy-system   --create-namespace --set cozystackOperator.image=ghcr.io/urmanac/cozystack-assets/cozystack-operator:v1.3.3 --set cozystackOperator.platformSourceUrl=oci://ghcr.io/urmanac/cozystack-assets/cozystack-packages --set cozystackOperator.platformSourceRef=digest=sha256:cdc117a96b4f52e94e6f9bfd4c20660ae5ddcd66c9a0f8343151d042e98070b6
+brew install helm
+helm upgrade --install cozystack oci://ghcr.io/cozystack/cozystack/cozy-installer   --version 1.3.3   --namespace cozy-system   --create-namespace --set cozystackOperator.image=ghcr.io/urmanac/cozystack-assets/cozystack-operator:v1.3.3 --set cozystackOperator.platformSourceUrl=oci://ghcr.io/urmanac/cozystack-assets/cozystack-packages --set cozystackOperator.platformSourceRef=digest=sha256:cdc117a96b4f52e94e6f9bfd4c20660ae5ddcd66c9a0f8343151d042e98070b6
+kg po -w

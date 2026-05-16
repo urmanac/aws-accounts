@@ -15,6 +15,35 @@ module "bootstrap_admin" {
   source      = "./modules/bootstrap-admin"
   environment = var.environment
   account_id  = var.account_map[var.environment]
+  
+  # Connect break-glass users to assumable roles
+  break_glass_assume_roles_policy_arn = module.assumable_roles.break_glass_policy_arn
+}
+
+# OIDC Identity Providers
+module "oidc_identity" {
+  source      = "./modules/oidc-identity"
+  environment = var.environment
+  
+  # Enable GitHub OIDC (primary)
+  enable_github_oidc   = true
+  github_organizations = ["urmanac", "kingdon-ci"]
+  
+  # Future: Enable GitLab and Custom OIDC
+  enable_gitlab_oidc = false
+  enable_custom_oidc = false
+}
+
+# Assumable Roles for RBAC
+module "assumable_roles" {
+  source = "./modules/assumable-roles"
+  
+  environment       = var.environment
+  role_prefix      = "${var.environment}-"
+  oidc_trust_policy = module.oidc_identity.multi_provider_trust_policy
+  
+  # Regional restrictions for CI role
+  allowed_regions = ["us-east-1", "eu-west-1"]
 }
 
 
@@ -36,6 +65,13 @@ module "bastion_ci" {
   instance_type             = "t4g.small"
   # assign from .env
   my_public_ssh_key         = local.env["MY_PUBLIC_SSH_KEY"]
+  my_wireguard_client_key   = local.env["MY_WIREGUARD_CLIENT_KEY"]
+  my_wireguard_client_pub   = local.env["MY_WIREGUARD_CLIENT_PUB"]
+  my_wireguard_server_pub   = local.env["MY_WIREGUARD_SERVER_PUB"]
+  my_wireguard_server_ipv6  = local.env["MY_WIREGUARD_SERVER_IPV6"]
+  # GHCR credentials for cozystack registry cache (optional)
+  cozystack_ghcr_username   = lookup(local.env, "GHCR_USERNAME", "")
+  cozystack_ghcr_token      = lookup(local.env, "GHCR_TOKEN", "")
 }
 
 module "vpc_eu_west_1" {
@@ -46,6 +82,7 @@ module "vpc_eu_west_1" {
   region = "eu-west-1"
   enable_bastion_networking = true
   enable_bastion_private_networking = false
+  enable_talos_networking = true
 }
 
 module "vpc_us_east_1" {

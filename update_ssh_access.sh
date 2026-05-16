@@ -7,9 +7,9 @@ set -euo pipefail
 
 # --- Configuration ---
 REGION="eu-west-1"
-ASG_NAME="tf-asg"
 SECURITY_GROUP_NAME="sandbox-eu-bastion-sg"
 ENV_FILE=".env"
+INSTANCE_TAG_NAME="tf-bastion"  # Tag name to find the bastion instance
 
 # --- Colors ---
 RED='\033[0;31m'
@@ -155,50 +155,73 @@ if [ -n "$CURRENT_IPV6" ]; then
     fi
 fi
 
-# --- Find bastion instance from ASG ---
-echo -n "Looking up bastion instance from ASG '$ASG_NAME'... "
-INSTANCE_ID="$(aws autoscaling describe-auto-scaling-groups \
+# --- Find bastion instance by tag ---
+echo -n "Looking up bastion instance with tag '$INSTANCE_TAG_NAME'... "
+INSTANCE_ID="$(aws ec2 describe-instances \
     --region "$REGION" \
-    --auto-scaling-group-names "$ASG_NAME" \
-    --query 'AutoScalingGroups[0].Instances[0].InstanceId' \
+    --filters "Name=tag:Name,Values=$INSTANCE_TAG_NAME" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].InstanceId' \
     --output text 2>/dev/null || true)"
 if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-    echo -e "${RED}✗ Failed to find instance in ASG${NC}"
+    echo -e "${RED}✗ Failed to find running instance with tag '$INSTANCE_TAG_NAME'${NC}"
     exit 1
 fi
 echo -e "${GREEN}✓ $INSTANCE_ID${NC}"
 
-echo -n "Looking up public IPs of $INSTANCE_ID... "
+echo -n "Looking up instance network details... "
 
+# Get private IP (always available)
+INSTANCE_PRIVATE_IP="$(aws ec2 describe-instances \
+    --region "$REGION" \
+    --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].PrivateIpAddress' \
+    --output text 2>/dev/null || true)"
+
+# Check for public IPv4 (may not exist in IPv6-only setup)
 INSTANCE_IPv4="$(aws ec2 describe-instances \
     --region "$REGION" \
     --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
     --output text 2>/dev/null || true)"
 
+# Check for IPv6 addresses
 INSTANCE_IPv6="$(aws ec2 describe-instances \
     --region "$REGION" \
     --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].NetworkInterfaces[0].Ipv6Addresses[0].Ipv6Address' \
     --output text 2>/dev/null || true)"
 
-if { [ -z "$INSTANCE_IPv4" ] || [ "$INSTANCE_IPv4" = "None" ]; } \
-   && { [ -z "$INSTANCE_IPv6" ] || [ "$INSTANCE_IPv6" = "None" ]; }; then
-    echo -e "${RED}✗ Instance has no public IPs${NC}"
+# Validate that we have at least private IP
+if [ -z "$INSTANCE_PRIVATE_IP" ] || [ "$INSTANCE_PRIVATE_IP" = "None" ]; then
+    echo -e "${RED}✗ Instance has no private IP${NC}"
     exit 1
 fi
 
-[ -n "$INSTANCE_IPv4" ] && [ "$INSTANCE_IPv4" != "None" ] && \
-  echo -e "${GREEN}✓ IPv4: $INSTANCE_IPv4${NC}"
+echo -e "${GREEN}✓ Private IP: $INSTANCE_PRIVATE_IP${NC}"
 
-[ -n "$INSTANCE_IPv6" ] && [ "$INSTANCE_IPv6" != "None" ] && \
-  echo -e "${GREEN}✓ IPv6: $INSTANCE_IPv6${NC}"
+# Check public connectivity
+HAS_PUBLIC_ACCESS=false
+if [ -n "$INSTANCE_IPv4" ] && [ "$INSTANCE_IPv4" != "None" ]; then
+    echo -e "${GREEN}✓ IPv4: $INSTANCE_IPv4${NC}"
+    HAS_PUBLIC_ACCESS=true
+fi
+
+if [ -n "$INSTANCE_IPv6" ] && [ "$INSTANCE_IPv6" != "None" ]; then
+    echo -e "${GREEN}✓ IPv6: $INSTANCE_IPv6${NC}"
+    HAS_PUBLIC_ACCESS=true
+fi
+
+if [ "$HAS_PUBLIC_ACCESS" = false ]; then
+    echo -e "${YELLOW}⚠ Instance has no public IPs (IPv6-only/private architecture)${NC}"
+    echo -e "${YELLOW}⚠ Direct SSH access not available - use SSM or VPN${NC}"
+fi
 
 echo ""
 echo -e "${GREEN}🎉 SSH access updated successfully!${NC}"
 echo "Your IP: $CURRENT_IP"
 echo "Security Group: $SECURITY_GROUP_NAME ($SECURITY_GROUP_ID)"
 echo "Bastion Instance: $INSTANCE_ID"
+echo "Private IP: $INSTANCE_PRIVATE_IP"
 
 if [ -n "$INSTANCE_IPv4" ] && [ "$INSTANCE_IPv4" != "None" ]; then
     echo "Public IPv4: $INSTANCE_IPv4"
@@ -209,15 +232,26 @@ if [ -n "$INSTANCE_IPv6" ] && [ "$INSTANCE_IPv6" != "None" ]; then
 fi
 
 echo ""
-echo "You can now SSH to your instance:"
 
-if [ -n "$INSTANCE_IPv4" ] && [ "$INSTANCE_IPv4" != "None" ]; then
-    echo -e "${YELLOW}ssh ec2-user@${INSTANCE_IPv4}${NC}"
-fi
-
-if [ -n "$INSTANCE_IPv6" ] && [ "$INSTANCE_IPv6" != "None" ]; then
-    # IPv6 literal addresses in ssh/scp must be wrapped in []
-    echo -e "${YELLOW}ssh ec2-user@${INSTANCE_IPv6}${NC}"
+# Provide connection instructions based on available access methods
+if [ "$HAS_PUBLIC_ACCESS" = true ]; then
+    echo "You can now SSH to your instance:"
+    
+    if [ -n "$INSTANCE_IPv4" ] && [ "$INSTANCE_IPv4" != "None" ]; then
+        echo -e "${YELLOW}ssh ec2-user@${INSTANCE_IPv4}${NC}"
+    fi
+    
+    if [ -n "$INSTANCE_IPv6" ] && [ "$INSTANCE_IPv6" != "None" ]; then
+        # For SSH, IPv6 addresses don't need brackets
+        echo -e "${YELLOW}ssh ec2-user@${INSTANCE_IPv6}${NC}"
+    fi
+else
+    echo "🔒 Instance uses private/IPv6-only architecture"
+    echo "Connect using AWS Systems Manager Session Manager:"
+    echo -e "${YELLOW}aws ssm start-session --target $INSTANCE_ID --region $REGION${NC}"
+    echo ""
+    echo "Or connect via WireGuard VPN and use private IP:"
+    echo -e "${YELLOW}ssh ec2-user@${INSTANCE_PRIVATE_IP}${NC}"
 fi
 
 echo ""

@@ -34,6 +34,12 @@ variable "enable_bastion_private_networking" {
   default     = false
 }
 
+variable "enable_talos_networking" {
+  type        = bool
+  description = "Enable networking components required for Talos Kubernetes clusters"
+  default     = false
+}
+
 provider "aws" {
   alias  = "this"
   region = var.region
@@ -58,14 +64,14 @@ resource "aws_internet_gateway" "this" {
   tags   = { Name = "${var.name}-igw" }
 }
 
-# Public subnets (2 AZs for now)
+# Public subnets (2 AZs for now) - IPv6-only public connectivity
 resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.this.id
   cidr_block              = cidrsubnet(var.cidr, 8, count.index)
   ipv6_cidr_block         = cidrsubnet(aws_vpc.this.ipv6_cidr_block, 8, count.index)
   availability_zone       = data.aws_availability_zones.available.names[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false  # IPv6-only design - no automatic public IPv4
 
   tags = { Name = "${var.name}-public-${count.index}" }
 }
@@ -136,20 +142,228 @@ resource "aws_security_group" "endpoints" {
   }
 }
 
+# Security group for Talos Kubernetes cluster
+resource "aws_security_group" "talos_cluster" {
+  count       = var.enable_talos_networking ? 1 : 0
+  name        = "${var.name}-talos-cluster-sg"
+  description = "Security group for Talos Kubernetes cluster communication"
+  vpc_id      = aws_vpc.this.id
+
+  # Kubernetes API server
+  ingress {
+    description = "Kubernetes API"
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # Talos API (apid)
+  ingress {
+    description = "Talos API (apid)"
+    from_port   = 50000
+    to_port     = 50000
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # Talos API (trustd)
+  ingress {
+    description = "Talos API (trustd)"
+    from_port   = 50001
+    to_port     = 50001
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # etcd peer communication
+  ingress {
+    description = "etcd peer"
+    from_port   = 2379
+    to_port     = 2380
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # kubelet API
+  ingress {
+    description = "kubelet API"
+    from_port   = 10250
+    to_port     = 10250
+    protocol    = "tcp"
+    self        = true
+  }
+
+  # All inter-node traffic — required for kube-ovn (OVN NB/SB ports 6641/6642/6644,
+  # Geneve overlay 6081/udp) and any future CNI/operator communication between nodes.
+  # Without this rule kube-ovn-controller times out connecting to ovn-central.
+  ingress {
+    description = "All inter-node traffic (kube-ovn, CNI overlay)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
+  }
+
+  # SSH access for initial setup (boot-to-talos)
+  ingress {
+    description = "SSH for initial Talos setup"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  # Registry cache access from cluster nodes (ports 5050-5054)
+  ingress {
+    description = "Registry cache (docker.io)"
+    from_port   = 5050
+    to_port     = 5050
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (registry.k8s.io)"
+    from_port   = 5051
+    to_port     = 5051
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (quay.io)"
+    from_port   = 5052
+    to_port     = 5052
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (gcr.io)"
+    from_port   = 5053
+    to_port     = 5053
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (ghcr.io)"
+    from_port   = 5054
+    to_port     = 5054
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  # ICMP for connectivity testing (ping)
+  ingress {
+    description = "ICMP (ping/connectivity testing)"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  # All outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name = "${var.name}-talos-cluster-sg"
+    Purpose = "Talos Kubernetes cluster communication"
+  }
+}
+
 # Security group for bastion hosts (only created if bastion networking is enabled)
+# Note: ingress rules are managed externally via update_ssh_access.sh
 resource "aws_security_group" "bastion" {
   count       = var.enable_bastion_networking ? 1 : 0
   name        = "${var.name}-bastion-sg"
   description = "Security group for bastion hosts"
   vpc_id      = aws_vpc.this.id
 
+  # Initial ingress rule - will be replaced by update_ssh_access.sh
   ingress {
-    description = "SSH from anywhere"
+    description = "SSH from anywhere (managed externally)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
+  }
+
+  # 🚨🚨🚨 MANUALLY APPLIED RULES - NOT MANAGED BY TERRAFORM 🚨🚨🚨
+  # The rules below were added manually via AWS CLI because the lifecycle
+  # block (ignore_changes = [ingress]) prevents Terraform from managing
+  # ingress rules. SSH rules are managed by update_ssh_access.sh script.
+  # 
+  # Manual commands used:
+  # 
+  # ICMP rule:
+  # aws ec2 authorize-security-group-ingress --group-id sg-0f9cb1bf403ae7dd1 \
+  #   --protocol icmp --port -1 --cidr 10.10.0.0/16 --region eu-west-1
+  #
+  # Registry cache ports (5050-5054):
+  # for port in 5050 5051 5052 5053 5054; do
+  #   aws ec2 authorize-security-group-ingress --group-id sg-0f9cb1bf403ae7dd1 \
+  #     --protocol tcp --port $port --cidr 10.10.0.0/16 --region eu-west-1
+  # done
+  #
+  # These rules allow:
+  # - ICMP (ping) from VPC CIDR for connectivity testing
+  # - Registry cache access from Talos nodes to bastion host (ports 5050-5054)
+  ingress {
+    description = "ICMP (ping/connectivity testing) - APPLIED MANUALLY"
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (docker.io) - APPLIED MANUALLY"
+    from_port   = 5050
+    to_port     = 5050
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (registry.k8s.io) - APPLIED MANUALLY"
+    from_port   = 5051
+    to_port     = 5051
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (quay.io) - APPLIED MANUALLY"
+    from_port   = 5052
+    to_port     = 5052
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (gcr.io) - APPLIED MANUALLY"
+    from_port   = 5053
+    to_port     = 5053
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
+  }
+
+  ingress {
+    description = "Registry cache (ghcr.io) - APPLIED MANUALLY"
+    from_port   = 5054
+    to_port     = 5054
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.this.cidr_block]
   }
 
   egress {
@@ -160,9 +374,40 @@ resource "aws_security_group" "bastion" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
+  # Ignore changes to ingress rules - managed by update_ssh_access.sh
+  lifecycle {
+    ignore_changes = [ingress]
+  }
+
   tags = {
     Name = "${var.name}-bastion-sg"
   }
+}
+
+# Cross-SG rules: allow bastion to reach Talos API (talosctl) and Kubernetes API (kubectl).
+# Separate aws_security_group_rule resources are used (not inline ingress blocks) to avoid
+# conflicts with the bastion SG's lifecycle { ignore_changes = [ingress] } and to make
+# the conditional count logic clean.
+resource "aws_security_group_rule" "bastion_to_talos_api" {
+  count                    = (var.enable_bastion_networking && var.enable_talos_networking) ? 1 : 0
+  type                     = "ingress"
+  description              = "talosctl from bastion"
+  from_port                = 50000
+  to_port                  = 50000
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.talos_cluster[0].id
+  source_security_group_id = aws_security_group.bastion[0].id
+}
+
+resource "aws_security_group_rule" "bastion_to_kube_api" {
+  count                    = (var.enable_bastion_networking && var.enable_talos_networking) ? 1 : 0
+  type                     = "ingress"
+  description              = "kubectl from bastion"
+  from_port                = 6443
+  to_port                  = 6443
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.talos_cluster[0].id
+  source_security_group_id = aws_security_group.bastion[0].id
 }
 
 # Interface endpoints for SSM (only created if bastion networking is enabled)
@@ -217,4 +462,9 @@ output "ssm_security_group_id" {
 output "bastion_security_group_id" {
   description = "The ID of the bastion security group (only available if bastion networking is enabled)"
   value       = var.enable_bastion_networking ? aws_security_group.bastion[0].id : null
+}
+
+output "talos_cluster_security_group_id" {
+  description = "The ID of the Talos cluster security group (only available if Talos networking is enabled)"
+  value       = var.enable_talos_networking ? aws_security_group.talos_cluster[0].id : null
 }

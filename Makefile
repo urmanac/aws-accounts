@@ -1,4 +1,9 @@
-.PHONY: prod-apply prod-plan apply-sb plan-sb prod-sts sandbox-sts import-sb import-prod
+
+SB_MFA_PROFILE ?= sb-terraform-admin-mfa
+PROD_MFA_PROFILE ?= prod-terraform-admin-mfa
+
+.PHONY: prod-apply prod-plan apply-sb plan-sb prod-sts sandbox-sts import-sb import-prod \
+
 
 import-sb:
 	tofu import -var-file=sb.tfvars -state=sb.tfstate 'module.bootstrap_admin.aws_iam_user.iamroot' terraform-admin
@@ -21,6 +26,7 @@ prod-sts:
 
 sandbox-sts:
 	aws sts get-session-token \
-		--serial-number arn:aws:iam::**REMOVED**:mfa/**REMOVED** \
-		--token-code $(shell op read "op://Kingdon/**REMOVED**/one-time password?attribute=otp") \
-		--profile terraform-admin-sb-mfa
+		--serial-number arn:aws:iam::181107798310:mfa/1password-TestTerraformKingdon \
+		--token-code $(shell op read "op://Kingdon/root_TF-TestPersonal AWS Amazon/Security/one-time password?attribute=otp") \
+		--profile $(SB_MFA_PROFILE)
+

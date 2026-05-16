@@ -62,6 +62,34 @@ resource "aws_iam_instance_profile" "bastion" {
 
 # Security group is now managed by the VPC module
 
+# Dedicated ENI with fixed IP for bastion
+resource "aws_network_interface" "bastion_eni" {
+  subnet_id           = var.public_subnet_ids[1]  # Use second public subnet (10.10.1.0/24)
+  private_ips         = ["10.10.1.100"]  # Back to original fixed IP
+  security_groups     = [var.bastion_security_group_id, var.ssm_security_group_id]
+  source_dest_check   = false  # Enable IP forwarding for WireGuard
+  ipv6_address_count  = 1      # IPv6 address for public connectivity
+
+  tags = {
+    Name = "${var.name}-bastion-eni"
+  }
+}
+
+# Log group
+resource "aws_cloudwatch_log_group" "bastion" {
+  name              = "/bastion/logs"
+  retention_in_days = 30
+  tags = {
+    Name = "${var.name}-bastion"
+  }
+}
+
+# Policy attachment for CloudWatch agent
+resource "aws_iam_role_policy_attachment" "bastion_cwagent" {
+  role       = aws_iam_role.bastion_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 # Launch template for bastion
 resource "aws_launch_template" "bastion" {
   name_prefix   = "${var.name}-lt-"
@@ -72,11 +100,28 @@ resource "aws_launch_template" "bastion" {
     arn = aws_iam_instance_profile.bastion.arn
   }
 
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size = 32  # Increased to accommodate AMI snapshot size
+      volume_type = "gp3"
+      encrypted   = true
+      delete_on_termination = true
+    }
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"   # allows IMDS
+    http_tokens                 = "required"  # enforce IMDSv2
+    http_protocol_ipv6           = "enabled"  # allow IPv6
+    http_put_response_hop_limit = 2           # standard
+  }
+
   network_interfaces {
-    subnet_id                   = element(var.public_subnet_ids, 0)
-    associate_public_ip_address = false # <– important, disables IPv4
-    ipv6_address_count          = 1     # <– asks for a single IPv6
-    security_groups             = [var.bastion_security_group_id, var.ssm_security_group_id]
+    network_interface_id        = aws_network_interface.bastion_eni.id
+    device_index                = 0
+    delete_on_termination       = false
+    associate_public_ip_address = false  # Ensure no public IPv4 (IPv6-only architecture)
   }
 
   tag_specifications {
@@ -86,105 +131,123 @@ resource "aws_launch_template" "bastion" {
     }
   }
 
-  user_data = base64encode(<<-EOT
-              #!/usr/bin/env bash
-              set -euo pipefail
-
-              # Create SSH authorized_keys for ec2-user
-              mkdir -p /home/ec2-user/.ssh
-              echo "${var.my_public_ssh_key}" > /home/ec2-user/.ssh/authorized_keys
-              chown -R ec2-user:ec2-user /home/ec2-user/.ssh
-              chmod 700 /home/ec2-user/.ssh
-              chmod 600 /home/ec2-user/.ssh/authorized_keys
-
-              dnf update -y
-              dnf install -y git unzip jq
-              cd /root
-              # Download the installer script:
-              curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
-              # Alternatively: wget --secure-protocol=TLSv1_2 --https-only https://get.opentofu.org/install-opentofu.sh -O install-opentofu.sh
-              # Give it execution permissions:
-              chmod +x install-opentofu.sh
-              # Please inspect the downloaded script
-              # Run the installer:
-              ./install-opentofu.sh --install-method rpm
-              # Remove the installer:
-              rm -f install-opentofu.sh
-
-              cat >/etc/profile.d/assume-tf-ci.sh <<'EOP'
-              export AWS_REGION=${var.region}
-              export AWS_PAGER=""
-              assume_tf_ci() {
-                CREDS=$(aws sts assume-role --role-arn ${aws_iam_role.terraform_ci.arn} --role-session-name tfci-$$)
-                export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId)
-                export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey)
-                export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken)
-                echo "Assumed ${aws_iam_role.terraform_ci.arn}"
-              }
-              EOP
-
-              # SSM Agent is preinstalled on AL2/AL2023; ensure it's running
-              systemctl enable amazon-ssm-agent
-              systemctl start amazon-ssm-agent
-              echo "Bootstrap complete" | logger
-
-              EOT
-  )
+  user_data = base64encode(templatefile("${path.module}/templates/userdata.tftpl", {
+    my_public_ssh_key         = var.my_public_ssh_key
+    my_wireguard_client_key   = var.my_wireguard_client_key
+    my_wireguard_server_pub   = var.my_wireguard_server_pub
+    my_wireguard_server_ipv6  = var.my_wireguard_server_ipv6
+    region                    = var.region
+    terraform_ci_role_arn     = aws_iam_role.terraform_ci.arn
+    cozystack_ghcr_username   = var.cozystack_ghcr_username
+    cozystack_ghcr_token      = var.cozystack_ghcr_token
+  }))
 }
 
-# Auto Scaling group
-resource "aws_autoscaling_group" "bastion" {
-  name = "${var.name}-asg"
+# Direct EC2 instance (no ASG needed for single fixed instance)
+resource "aws_instance" "bastion" {
+  ami                     = data.aws_ami.amazon_linux.id
+  instance_type           = var.instance_type
+  iam_instance_profile    = aws_iam_instance_profile.bastion.name
+  user_data              = base64encode(templatefile("${path.module}/templates/userdata.tftpl", {
+    my_public_ssh_key         = var.my_public_ssh_key
+    my_wireguard_client_key   = var.my_wireguard_client_key
+    my_wireguard_client_pub   = var.my_wireguard_client_pub
+    my_wireguard_server_pub   = var.my_wireguard_server_pub
+    my_wireguard_server_ipv6  = var.my_wireguard_server_ipv6
+    region                    = var.region
+    terraform_ci_role_arn     = aws_iam_role.terraform_ci.arn
+    cozystack_ghcr_username   = var.cozystack_ghcr_username
+    cozystack_ghcr_token      = var.cozystack_ghcr_token
+  }))
+  user_data_replace_on_change = true
+
+  network_interface {
+    network_interface_id  = aws_network_interface.bastion_eni.id
+    device_index          = 0
+    delete_on_termination = false
+  }
+
+  root_block_device {
+    volume_size           = 32
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = true
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_protocol_ipv6          = "enabled"
+    http_put_response_hop_limit = 2
+  }
+
+  tags = {
+    Name = "${var.name}-bastion"
+  }
 
   lifecycle {
-    ignore_changes = [name]
     create_before_destroy = true
   }
-
-  desired_capacity    = 0
-  max_size            = 1
-  min_size            = 0
-  vpc_zone_identifier  = var.public_subnet_ids
-
-
-  launch_template {
-    id      = aws_launch_template.bastion.id
-    version = "$Latest"
-  }
-
-  tag {
-    key                 = "Name"
-    value               = "${var.name}-bastion"
-    propagate_at_launch = true
-  }
 }
 
-# Scheduled actions: start at 7 AM, stop at 12 PM EST daily
-resource "aws_autoscaling_schedule" "start" {
-  scheduled_action_name  = "${var.name}-start"
-  min_size               = 0
-  max_size               = 1
-  desired_capacity       = 1
-  recurrence             = "0 12 * * *" # 7 AM US/Eastern == 12 UTC
-  autoscaling_group_name = aws_autoscaling_group.bastion.name
-}
+# Scheduled actions using EventBridge + Lambda (replacing ASG schedules)
+# Note: This would need additional implementation for start/stop scheduling
+# For now, instance will run continuously
 
-resource "aws_autoscaling_schedule" "stop" {
-  scheduled_action_name  = "${var.name}-stop"
-  min_size               = 0
-  max_size               = 1
-  desired_capacity       = 0
-  recurrence             = "0 17 * * *" # 12 PM US/Eastern == 17 UTC
-  autoscaling_group_name = aws_autoscaling_group.bastion.name
-}
+# Auto Scaling group (REPLACED WITH DIRECT INSTANCE)
+# resource "aws_autoscaling_group" "bastion" {
+#   name = "${var.name}-asg"
+
+#   lifecycle {
+#     ignore_changes = [name]
+#     create_before_destroy = true
+#   }
+
+#   desired_capacity         = 1
+#   max_size                = 1
+#   min_size                = 0
+#   availability_zones      = [data.aws_subnet.eni_subnet.availability_zone]  # Use AZ from ENI subnet
+
+#   launch_template {
+#     id      = aws_launch_template.bastion.id
+#     version = "$Latest"
+#   }
+
+#   tag {
+#     key                 = "Name"
+#     value               = "${var.name}-bastion"
+#     propagate_at_launch = true
+#   }
+# }
+
+# Scheduled actions: start at 7 AM, stop at 7 PM EST daily (extended for cozystack conference week)
+# NOTE: With direct EC2 instance, scheduling would need EventBridge + Lambda implementation
+# For now, instance runs continuously for cozystack deployment
+# resource "aws_autoscaling_schedule" "start" {
+#   scheduled_action_name  = "${var.name}-start"
+#   min_size               = 0
+#   max_size               = 1
+#   desired_capacity       = 1
+#   recurrence             = "0 12 * * *" # 7 AM EST = 12 UTC
+#   autoscaling_group_name = aws_autoscaling_group.bastion.name
+# }
+
+# resource "aws_autoscaling_schedule" "stop" {
+#   scheduled_action_name  = "${var.name}-stop"
+#   min_size               = 0
+#   max_size               = 1
+#   desired_capacity       = 0
+#   recurrence             = "0 0 * * *" # 7 PM EST = 0 UTC next day (midnight UTC)
+#   autoscaling_group_name = aws_autoscaling_group.bastion.name
+# }
 
 # Find Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["137112412989"]
   filter {
     name   = "name"
-    values = ["al2023-ami-*-kernel-6.1-arm64"]
+    values = ["al2023-ami-20*-kernel-6.1-arm64"]
   }
   filter {
     name   = "architecture"
@@ -194,5 +257,10 @@ data "aws_ami" "amazon_linux" {
     name   = "virtualization-type"
     values = ["hvm"]
   }
+}
+
+# Get subnet info for ENI placement
+data "aws_subnet" "eni_subnet" {
+  id = var.public_subnet_ids[1]
 }
 
