@@ -194,6 +194,17 @@ resource "aws_security_group" "talos_cluster" {
     self        = true
   }
 
+  # All inter-node traffic — required for kube-ovn (OVN NB/SB ports 6641/6642/6644,
+  # Geneve overlay 6081/udp) and any future CNI/operator communication between nodes.
+  # Without this rule kube-ovn-controller times out connecting to ovn-central.
+  ingress {
+    description = "All inter-node traffic (kube-ovn, CNI overlay)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
+  }
+
   # SSH access for initial setup (boot-to-talos)
   ingress {
     description = "SSH for initial Talos setup"
@@ -371,6 +382,32 @@ resource "aws_security_group" "bastion" {
   tags = {
     Name = "${var.name}-bastion-sg"
   }
+}
+
+# Cross-SG rules: allow bastion to reach Talos API (talosctl) and Kubernetes API (kubectl).
+# Separate aws_security_group_rule resources are used (not inline ingress blocks) to avoid
+# conflicts with the bastion SG's lifecycle { ignore_changes = [ingress] } and to make
+# the conditional count logic clean.
+resource "aws_security_group_rule" "bastion_to_talos_api" {
+  count                    = (var.enable_bastion_networking && var.enable_talos_networking) ? 1 : 0
+  type                     = "ingress"
+  description              = "talosctl from bastion"
+  from_port                = 50000
+  to_port                  = 50000
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.talos_cluster[0].id
+  source_security_group_id = aws_security_group.bastion[0].id
+}
+
+resource "aws_security_group_rule" "bastion_to_kube_api" {
+  count                    = (var.enable_bastion_networking && var.enable_talos_networking) ? 1 : 0
+  type                     = "ingress"
+  description              = "kubectl from bastion"
+  from_port                = 6443
+  to_port                  = 6443
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.talos_cluster[0].id
+  source_security_group_id = aws_security_group.bastion[0].id
 }
 
 # Interface endpoints for SSM (only created if bastion networking is enabled)

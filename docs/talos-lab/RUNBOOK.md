@@ -298,18 +298,51 @@ up it will cascade to ~20 more HelmReleases. The kubeovn unblock also cascades
 to ~10 more. This cluster was genuinely progressing toward full isp-full
 platform readiness on ARM64 Graviton with no public IPv4.
 
+## Final pod state (2026-05-16, ~45 min after helm install)
+
+```
+Running:  cilium (×4), flux (5/5), kube-ovn (all 9 pods), metallb (controller
+          + 3 speakers), multus (×3), grafana-operator, kafka-operator,
+          backup-controller (×2), backupstrategy-controller (×2),
+          objectstorage-controller, reloader, metrics-server,
+          kubevirt-operator (×2), kubevirt-cdi-operator, cozystack-operator,
+          coredns (×2), kube-apiserver/scheduler/controller-manager
+```
+
+**Architecture failures (need ARM64 builds in cozystack-moon-and-back):**
+
+- `cozy-proxy` — `CrashLoopBackOff`, exec format error, amd64-only binary.
+  This is the Tailscale/ingress proxy used by CozyStack. Needs ARM64 build.
+- `redis-operator` — `CrashLoopBackOff`, exec format error, amd64-only.
+
+**Registry/egress failures (transient or proxy coverage gap):**
+
+- `clickhouse-operator` (altinity images) — trying to pull from `mirror.gcr.io`
+  directly instead of via the bastion proxy. Containerd mirrors cover `docker.io`
+  but the altinity chart hardcodes `mirror.gcr.io` as a Docker Hub mirror — this
+  is an external GCR endpoint the proxy doesn't cover. Needs investigation of
+  whether cozystack can configure altinity to use `docker.io` canonical refs.
+- `goldpinger`, `rabbitmq-cluster-operator` — `ImagePullBackOff`, likely
+  transient slow-warming of proxy cache. Would probably resolve given more time.
+
+**Blocked (cert-manager not yet ready by session end):**
+- capi-operator, kamaji, etcd-operator, etc. — all the cert-manager dependents
+  were still pending. cert-manager-crds was True, cert-manager was deploying.
+
 ## Open TODOs
 
-- [ ] **Terraform**: codify in `modules/vpc/main.tf`:
-  - Port 50000 + 6443 ingress from bastion SG (`sg-0f9cb1bf403ae7dd1`) to Talos SG
-  - All-traffic self-referencing rule within Talos SG (cluster-internal)
+- [ ] **cozystack-moon-and-back**: build ARM64 images for `cozy-proxy` and
+  `redis-operator` — both crash with exec format error on Graviton
+- [ ] **cozystack-moon-and-back**: investigate clickhouse altinity images
+  being pulled from `mirror.gcr.io` (hardcoded in chart) — needs `docker.io`
+  canonical refs or bastion proxy coverage of `mirror.gcr.io`
+- [ ] **Terraform** ✅ now codified:
+  - `aws_security_group_rule.bastion_to_talos_api` — port 50000 from bastion SG
+  - `aws_security_group_rule.bastion_to_kube_api` — port 6443 from bastion SG
+  - All-traffic self-referencing rule in `talos_cluster` SG (for kube-ovn)
 - [ ] Add `make` (and a pre-downloaded `helm` binary) to bastion userdata
 - [ ] Find the cozystack helm value that makes the operator emit
   OCIRepositories already pointed at `10.10.1.100:5054` with
   `insecure: true` — avoid the live `kubectl edit` patch on each deploy
-- [ ] Decide whether to commit the `talm` cluster project as a git
-  submodule or sibling repo, rather than the snapshot in
-  cozystack-cluster/
-- [ ] Follow up: did cert-manager finish deploying and cascade to kamaji /
-  capi-operator / etcd-operator? Did linstor complete after kubeovn unblock?
-  Would need another session with a fresh cluster to confirm full platform.
+- [ ] Follow up: did cert-manager cascade to kamaji/capi-operator? Did
+  linstor complete? Next session should confirm full isp-full platform.
