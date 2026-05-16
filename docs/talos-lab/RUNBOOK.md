@@ -155,44 +155,56 @@ The cluster reaches Ready despite these. Don't chase them.
 
 ---
 
-## Where we got stuck: OCIRepository can't reach ghcr.io
+## SOLVED: OCIRepository via the bastion registry cache
 
-`cozystack-platform` HelmRelease never resolved because Flux's OCIRepository
-controller couldn't pull from `ghcr.io`:
+Initial problem: `cozystack-platform` HelmRelease stuck because Flux's
+OCIRepository couldn't reach `ghcr.io`:
 
 ```
 OCIRepository/cozy-system/cozystack-platform: failed to pull artifact:
   Get "https://ghcr.io/v2/": dial tcp 4.208.26.196:443: i/o timeout
 ```
 
-### Root cause
+Talos's `machine.registries.mirrors` block routes **containerd image pulls**
+through the bastion proxy. Flux's OCIRepository source controller does HTTPS
+calls from inside the pod and bypasses containerd's mirror config entirely.
+Pods have no IPv4 egress.
 
-The Talos `machine.registries.mirrors` block routes **containerd image
-pulls** through the bastion proxy. **Flux's OCIRepository source controller
-does HTTPS calls from inside the pod**, bypassing containerd's mirror config
-entirely. The pods have no IPv4 egress (subnet has no NAT gateway, nodes
-have no public IPv4), and IPv6 to ghcr.io fails or is missing too.
+### Fix
 
-### Possible fixes for next session
+Point the OCIRepository at the bastion proxy directly and mark it insecure
+(plain HTTP, no TLS verify):
 
-1. **NAT Gateway** on the public subnet → cheapest path to give pods real
-   IPv4 egress. ~$32/mo + data, but solves the problem cleanly.
-2. **WireGuard from pods through bastion** — the bastion already has a
-   working tunnel. Could expose it as a pod-level default route via a
-   `kube-egress-gateway`-style daemonset. Complex.
-3. **Egress-via-bastion HTTP(S) proxy** — run a forward proxy (squid /
-   tinyproxy) on the bastion, and set `HTTPS_PROXY` on the Flux source
-   controller deployment. Simplest if Flux respects proxy env vars (it
-   does for the OCIRepository controller as of source-controller v1.3+).
-4. **Pre-mirror the OCI artifact** into the bastion's ghcr.io cache by
-   pulling it once on the bastion. The registry:2 pull-through cache
-   should serve it on subsequent requests — but Flux dials ghcr.io
-   directly, not the mirror, so this alone won't help unless combined
-   with option 3.
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: cozystack-packages
+  namespace: cozy-system
+spec:
+  insecure: true                              # <-- the key flag
+  url: oci://10.10.1.100:5054/urmanac/cozystack-assets/cozystack-packages
+  # ... ref/digest unchanged
+```
 
-The Talos `machine.registries` mirror **does work** for containerd-driven
-pulls (kubelet/cri pulls of images for pods). It just doesn't catch Flux's
-in-pod HTTPS clients.
+```bash
+kubectl -n cozy-system annotate ocirepository cozystack-packages \
+  reconcile.fluxcd.io/requestedAt="$(date +%s)" --overwrite
+```
+
+Both `cozystack-packages` and `cozystack-platform` OCIRepositories then
+flipped to `True` and pulled the artifact from the bastion's `ghcr.io`
+pull-through cache (`10.10.1.100:5054`). Cilium daemonset rolled out,
+flux-tenants started spinning up.
+
+### TODO: bake this in
+
+The cozystack helm install needs flags (or values overrides) to set both
+`url` to the bastion proxy and `insecure: true` on the OCIRepository(s) it
+creates. Currently this was patched live with `kubectl edit`. Look for the
+cozystack-operator settings that produce these OCIRepositories — likely
+`platformSourceUrl` (already passed) plus a new `platformSourceInsecure`
+or equivalent flag.
 
 ---
 
@@ -213,7 +225,9 @@ instance and gets released within ~60s of termination.
 
 - [ ] Codify port 50000 + 6443 ingress from bastion SG in Terraform
 - [ ] Add `make` to bastion userdata
-- [ ] Solve pod IPv4 egress for Flux OCIRepository (see options above)
+- [ ] Find the cozystack helm value that makes the operator emit
+  OCIRepositories already pointed at `10.10.1.100:5054` with
+  `insecure: true` — avoid the live `kubectl edit` patch
 - [ ] Investigate whether cozystack-platform Package CRD needs a different
   source than OCIRepository — there may be a Helm chart variant that
   pulls via `helm.toolkit.fluxcd.io/HelmRepository` (which respects
