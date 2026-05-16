@@ -234,17 +234,21 @@ to bring a fresh cluster up.
 - ✅ Spin WASM workloads run on ARM64 Graviton
 - ✅ Kubernetes v1.34.1 on Talos v1.11.5 (ARM64)
 
-### 2026-05-16 — three-node cluster `cozyaws` with talm
+### 2026-05-16 — three-node cluster `cozyaws` with talm (isp-full variant)
 
 - ✅ 3 × `c7g.large` on Talos v1.12.7 ARM64 (`ami-004622e65b38b994c`)
-- ✅ talm-based config rendering (helm templater) bootstrapped cluster
-- ✅ All 3 nodes reached Running, kube-apiserver/scheduler/controller-manager up
-- ✅ `cozystack-operator` v1.3.3 installed via helm, pod Running
-- ✅ Flux pods (`flux`, `flux-tenants`) scheduling in `cozy-fluxcd`
-- ❌ `cozystack-platform` Package stuck — OCIRepository can't reach ghcr.io
-  from inside the cluster (pods have no IPv4 egress, mirror config only
-  affects containerd image pulls, not in-pod HTTPS clients)
-- See [RUNBOOK.md](RUNBOOK.md) for full gotchas and next-attempt plan
+- ✅ talm-based config rendering + bootstrap
+- ✅ All 3 nodes Ready
+- ✅ `cozystack-operator` v1.3.3 + Flux running
+- ✅ OCIRepository pulling through bastion proxy via `spec.insecure: true`
+- ✅ cilium installed and healthy
+- ✅ kube-ovn installed (after adding all-traffic intra-SG rule — port 6641)
+- ✅ 31/~70 HelmReleases True within 35 minutes; rest cascading from cert-manager
+- ⏳ cert-manager deploying (blocks ~20 more HelmReleases)
+- ⏳ linstor / piraeus unblocking after kubeovn fix (blocks cozystack-scheduler)
+- ❌ Nodes terminated before full platform confirmed
+
+Full gotchas and install state: [RUNBOOK.md](RUNBOOK.md)
 
 The images are currently built against **CozyStack v1.3.3** (as of May 2026).
 See [urmanac/cozystack-moon-and-back](https://github.com/urmanac/cozystack-moon-and-back)
