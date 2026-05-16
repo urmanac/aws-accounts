@@ -1,0 +1,28 @@
+machine:
+  time:
+    servers:
+      - 169.254.169.123
+  registries:
+    mirrors:
+      docker.io:
+        endpoints:
+          - http://10.10.1.100:5050
+      registry.k8s.io:
+        endpoints:
+          - http://10.10.1.100:5051
+      quay.io:
+        endpoints:
+          - http://10.10.1.100:5052
+      gcr.io:
+        endpoints:
+          - http://10.10.1.100:5053
+      ghcr.io:
+        endpoints:
+          - http://10.10.1.100:5054
+  features:
+    kubernetesTalosAPIAccess:
+      enabled: true
+      allowedRoles:
+        - os:admin
+      allowedKubernetesNamespaces:
+        - kube-system

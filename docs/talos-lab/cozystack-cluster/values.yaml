@@ -1,0 +1,163 @@
+# REQUIRED. Cluster control-plane endpoint. Left empty intentionally
+# so the chart's `required` check fires loudly on a fresh install.
+# A placeholder default would silently embed a broken endpoint in
+# every rendered machine config. No auto-discovery is possible: this
+# is a cluster-wide value that every node's kubelet and kube-proxy
+# dials, not a per-node one.
+#
+# For cozystack VIP setups, set `endpoint` AND `floatingIP` below to
+# the SAME IP. floatingIP drives the per-node VIP (Layer2VIPConfig)
+# that endpoint points at; leaving them mismatched produces a cluster
+# that talks to an IP no node actually claims.
+#
+# For single-node clusters without a VIP, set `endpoint` to that
+# node's routable IP and leave `floatingIP` blank.
+#
+# For multi-node with an external load balancer, set `endpoint` to
+# the LB URL and leave `floatingIP` blank.
+#
+# Example: endpoint: "https://192.168.0.1:6443"
+endpoint: "https://10.10.1.101:6443"
+
+# Optional override for the cluster's name (defaults to Chart.Name).
+# Note that changing this value on a live cluster is considered
+# dangerous as it is baked into PKI (cert SANs) and ETCD identity at
+# bootstrap.
+clusterName: "cozyaws"
+
+clusterDomain: cozy.local
+# Layer-2 VIP for cozystack multi-node setups. When set, the chart
+# emits a Layer2VIPConfig document pinning this IP as a floating
+# address on the node's primary link. MUST equal the host portion
+# of `endpoint` above, otherwise the cluster dials an IP that no
+# node actually claims. Blank by default so the shipped value never
+# silently embeds a wrong VIP -- fill in only if you want a VIP.
+# Single-node clusters and external-LB topologies leave it blank.
+# Example: floatingIP: 192.168.0.1
+floatingIP: ""
+
+# Optional override for the link Layer2VIPConfig is pinned to. When
+# left empty the chart picks the link automatically using a two-step
+# discovery rule, with longest-prefix-match across configurable
+# links:
+#
+#   1. If the floatingIP falls inside the CIDR of any address on a
+#      configurable link (physical NIC, bond, vlan, bridge — same
+#      set the multi-doc renderer emits LinkConfig for), the link
+#      with the most-specific (longest-prefix) match wins. This is
+#      what handles the Hetzner-style topology: a public NIC
+#      carrying the IPv4 default route plus a VLAN child carrying
+#      the private cluster network — the VIP lands on the VLAN
+#      child where the cluster subnet lives.
+#
+#   2. Otherwise, fall back to the IPv4-default-gateway-bearing
+#      link. This handles upstream-routable VIPs that arrive via
+#      the default route and have no matching subnet on the node.
+#
+# Addresses on links the chart does not emit a per-link document
+# for (Wireguard, kernel-managed loopback, slave NICs of a bond,
+# anything outside the {physical NIC, bond, vlan, bridge} set
+# above) cannot win selection. A VIP pinned there would have no
+# surrounding network document and would race the link's own
+# address management on apply.
+#
+# Set vipLink explicitly when the target link does not yet exist on
+# the live system at first apply -- typically a VLAN sub-interface
+# that the same template is about to bring up. Without the override,
+# fresh-node renders before discovery has populated the addresses
+# table would fall back to the default-gateway link (or skip
+# emission entirely if discovery has not yet resolved one).
+# When set, Layer2VIPConfig is emitted unconditionally, even on a
+# totally fresh node where discovery has not yet resolved a default-
+# gateway link. The chart does NOT auto-emit a LinkConfig/VLANConfig
+# for the override link; the operator is responsible for ensuring
+# the link comes up — typically by adding a LinkConfig or VLANConfig
+# document for that link to the per-node body overlay. If no such
+# document brings vipLink up, Layer2VIPConfig will dangle on a
+# non-existent link and the cluster endpoint will be unreachable.
+# Example: vipLink: eth0.4000
+vipLink: ""
+image: "ghcr.io/urmanac/cozystack-assets/talos/cozystack-spin-only/talos:v1.12.7"
+podSubnets:
+- 10.244.0.0/16
+serviceSubnets:
+- 10.96.0.0/16
+
+# Optional override for machine.kubelet.nodeIP.validSubnets and
+# cluster.etcd.advertisedSubnets. When left empty the chart derives
+# the value from the node's IPv4-default-gateway-bearing link at
+# render time (via talm.discovered.default_addresses_by_gateway), so
+# the generated machine config matches the node's actual network
+# without any values.yaml edit. Set this only when you want to pin a
+# specific subnet — typically for multi-homed nodes where the
+# IPv4-default-gateway link is not the subnet you want kubelet/etcd
+# to use, or for IPv6-only setups where the chart's IPv4 default
+# would otherwise leave validSubnets empty.
+# Example:
+#   advertisedSubnets:
+#     - "10.0.0.0/8"
+advertisedSubnets: []
+
+oidcIssuerUrl: ""
+certSANs: []
+nr_hugepages: 0
+allocateNodeCIDRs: true
+
+# Operator-supplied extension points: each `extra*` key ADDS to a
+# load-bearing default the cozystack preset ships. For every key
+# below: leaving it at the empty default is a no-op; the preset's
+# hardcoded set continues to render unchanged. Keys never override
+# the preset's built-ins — if a map-shaped `extra*` value contains a
+# key that collides with a built-in, the chart fails at render time
+# with a guidance message pointing at the offending key. yaml.v3
+# rejects duplicate map keys on decode anyway, so a silent override
+# would produce a Talos config that cannot round-trip. Operators who
+# need different defaults fork the preset.
+
+# Extra kernel modules to load on every node, appended to the preset's
+# built-in list (openvswitch, drbd, zfs, spl, vfio_pci, vfio_iommu_type1).
+# Lists append unconditionally — duplicates by `name` are tolerated by
+# Talos at load time. Each entry is a Talos kernel module spec; see
+# Talos docs for the full shape. Examples:
+#   extraKernelModules:
+#     - name: nf_conntrack
+#     - name: foo
+#       parameters:
+#         - bar=baz
+extraKernelModules: []
+
+# Extra kubelet args added to the preset's kubelet.extraConfig
+# (cpuManagerPolicy: static, maxPods: 512). Operator keys must be
+# DISJOINT from the built-in set; a collision fails the render with
+# a hint pointing at the offending key. Example:
+#   extraKubeletExtraArgs:
+#     feature-gates: "NodeSwap=true"
+extraKubeletExtraArgs: {}
+
+# Extra kernel sysctls added to machine.sysctls alongside the
+# preset's built-ins (net.ipv4.neigh.default.gc_thresh{1,2,3} and
+# vm.nr_hugepages — the latter is gated by the dedicated `nr_hugepages`
+# values key above; set THAT key, not extraSysctls.vm.nr_hugepages,
+# even when the gate is currently inactive — the collision check
+# treats vm.nr_hugepages as preset-owned regardless of the gate state).
+# Operator keys must be DISJOINT from the built-in set; a collision
+# fails the render. Values must be YAML strings (Talos expects
+# strings even for numeric sysctls). Example:
+#   extraSysctls:
+#     net.core.somaxconn: "65535"
+#     fs.inotify.max_user_watches: "524288"
+extraSysctls: {}
+
+# Extra machine.files entries appended to the preset's built-in
+# files (CRI customization and lvm.conf). Lists append; Talos
+# rejects duplicate `path:` entries at apply time, so operator
+# entries must not name a path the preset already writes. Each
+# entry is a Talos machine.files spec (content / path / permissions
+# / op). Example:
+#   extraMachineFiles:
+#     - path: /etc/cri/conf.d/30-extra.part
+#       op: create
+#       content: |
+#         [debug]
+#           level = "info"
+extraMachineFiles: []
